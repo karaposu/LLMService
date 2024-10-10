@@ -5,7 +5,7 @@ import os
 
 setup(
     name='llmkit',  # Package name
-    version='0.1.0',  # Version of your package
+    version='0.0.1',  # Version of your package
     author='Enes Kuzucu',  # Your name
 
     description='for creating fast and easy llm apps',  # Short description
