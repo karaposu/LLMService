@@ -13,7 +13,7 @@ setup(
     long_description_content_type='text/markdown',  # Type of the long description
     packages=find_packages(),  # Automatically find packages in the directory
     install_requires=[
-        'openai',
+        'langchain'
         'langchain-community',
         'langchain-openai',
         'proteas',
@@ -25,6 +25,8 @@ setup(
         'python-dotenv',
         'pytest',
     ],
+
+
     classifiers=[
         'Development Status :: 3 - Alpha',  # Development status
         'Intended Audience :: Developers',
