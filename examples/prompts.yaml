@@ -1,0 +1,15 @@
+main:
+
+
+  - name: "input_paragraph"
+    statement_suffix: "Here is"
+    question_suffix: "What is "
+    placeholder_proclamation: input text to be translated
+    placeholder: "input_paragraph"
+
+
+  - name: "translate_to_russian"
+    info: > 
+      take Above text and translate it to russian with a scientific language, Do not output any additiaonal text.
+   
+

@@ -1,0 +1,13 @@
+#langchain
+openai
+langchain-community
+langchain-openai
+proteas
+string2dict
+indented_logger
+pyyaml
+tqdm
+python-magic
+python-dotenv
+pytest
+
