@@ -144,3 +144,7 @@ Result will be a generation_result object which inludes all the information you 
 
 
 
+some notes to add to future 
+
+The Result Monad enhances error management by providing detailed insights into why a particular operation might have failed, enhancing the robustness of systems that interact with external data.
+As evident from the examples, each of these monads facilitates the creation of function chains, employing a paradigm often referred to as a “railroad approach.” This approach visualizes the sequence of functions as a metaphorical railroad track, where the code smoothly travels along, guided by the monadic structure. The beauty of this railroad approach lies in its ability to elegantly manage complex computations and transformations, ensuring a structured and streamlined flow of operations.

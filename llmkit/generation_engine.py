@@ -1,20 +1,16 @@
 # here is generation_engine.py
 
 import logging
-import re
+
 from time import time
-from typing import Any, Dict
-from dataclasses import dataclass,field
-from typing import Any, Dict, Optional, Tuple, List, Union, Literal
-
-from datetime import datetime
-import json
-
 from langchain_core.prompts import PromptTemplate
 from .llm_handler import  LLMHandler
 from string2dict import String2Dict
+
 from indented_logger import setup_logging, log_indent
 from proteas import Proteas
+from .postprocessor import Postprocessor, PostprocessingResult
+from .schemas import GenerationRequest, GenerationResult
 
 
 setup_logging( level=logging.DEBUG,include_func=True, truncate_messages=False,min_func_name_col=100)
@@ -34,21 +30,6 @@ gpt_models_output_cost = {'gpt-4o': 15 / 1000000,
                           'o1-mini': 12 / 1000000}
 
 
-@dataclass
-class GenerationResult:
-    success: bool
-    meta: Dict[str, Any] = None #tokens,cost ...
-    content: Optional[str] = None #result
-    raw_content: Optional[str] = None #raw result
-    elapsed_time: Optional[int] = None
-    error_message: Optional[str] = None #ratelimits
-    model: Optional[str] = None
-    formatted_prompt: Optional[str] = None #debug
-    unformatted_prompt: Optional[str] = None #for debug
-    operation_name: Optional[str] = None
-    request_id: Optional[Union[str, int]] = None
-    response_type: Optional[Literal["json", "str"]] = None
-    number_of_retries : Optional[int] = None #tenacity data
 
 
 
@@ -72,26 +53,19 @@ class GenerationResult:
 
 
 class GenerationEngine:
-    def __init__(self,
-                 llm_handler=None,
-                 model_name=None,
-                 logger = None,
-                 debug=False):
-
-        self.logger = logger
-        self.debug= debug
+    def __init__(self, llm_handler=None, model_name=None, logger=None, debug=False):
+        self.logger = logger or logging.getLogger(__name__)
+        self.debug = debug
         self.s2d = String2Dict()
 
-        if  llm_handler:
+        if llm_handler:
             self.llm_handler = llm_handler
-        else :
+        else:
             self.llm_handler = LLMHandler(model_name=model_name)
 
-            # self.logger.debug("OPENAI MODEL? : %s", self.llm_handler.OPENAI_MODEL)
-
         self.proteas = Proteas()
-        # yaml_file = 'prompts.yaml'
-        # self.proteas.load_unit_skeletons_from_yaml(yaml_file)
+
+        self.postprocessor = Postprocessor(logger=self.logger, debug=self.debug)
 
         if self.debug:
             pass
@@ -119,7 +93,7 @@ class GenerationEngine:
         pass
 
 
-    def answer_isolater_refiner(self, answer_to_be_refined , answer_isolater_refinement_config ):
+    def answer_isolator_refiner(self, answer_to_be_refined , answer_isolater_refinement_config ):
 
         semantic_element_for_extraction  =answer_isolater_refinement_config["semantic_element_for_extraction"]
 
@@ -139,61 +113,35 @@ class GenerationEngine:
             self.logger.debug(f"refiner_result: {refiner_result.content}")
 
 
-    def postprocessor(self, llm_output,  postprocess_config ):
-        postprocessed_result= None
-        temp_value_holder=llm_output
-        if self.debug:
-            self.logger.debug(f"Postprocessing..")
-
-        postprocess_to_dict = postprocess_config.get("postprocess_to_dict", False)
-        extract_content_with_a_key = postprocess_config.get("extract_content_with_a_key", None)
-        string_match_validation = postprocess_config.get("string_match_validation", False)
-
-        if postprocess_to_dict:
-
-            dictionarized_content = self.s2d.run(llm_output)
-            temp_value_holder = dictionarized_content
-            postprocessed_result = temp_value_holder
-
-        if extract_content_with_a_key:
-            temp_value_holder = temp_value_holder[extract_content_with_a_key]
-            postprocessed_result= temp_value_holder
-
-        return postprocessed_result
-
-
-    def generate_output(self,
-                        unformatted_prompt,
-                        data_for_placeholders,
-                        postprocess_config=False,
-                        answer_isolater_refinement_config=False,
-                        operation_name=None
-                       ):
+    def generate_output(self, generation_request: GenerationRequest) -> GenerationResult:
+        # Unpack the GenerationRequest
+        placeholders = generation_request.data_for_placeholders
+        unformatted_prompt = generation_request.unformatted_prompt
+        postprocess_config = generation_request.postprocess_config
+        answer_isolator_refinement_config = generation_request.answer_isolator_refinement_config
+        operation_name = generation_request.operation_name
 
         generation_result = self.generate(
             unformatted_template=unformatted_prompt,
-            data_for_placeholders=data_for_placeholders
+            data_for_placeholders=placeholders
         )
 
-        if self.debug:
-            self.logger.debug(" ")
-            self.logger.debug(f"repr generation_result:")
-            self.logger.debug(f"{repr(generation_result.content)}")
+        # Assign request_id and operation_name
+        generation_result.request_id = generation_request.request_id
+        generation_result.operation_name = generation_request.operation_name
 
-        if postprocess_config:
-            if isinstance(postprocess_config, dict):
-                postprocessed_result=self.postprocessor(generation_result.content,  postprocess_config)
-
-        if answer_isolater_refinement_config:
-            if isinstance(postprocess_config, dict):
-                postprocessed_result = self.answer_isolater_refiner(generation_result.content, answer_isolater_refinement_config)
-
-        if operation_name:
-                generation_result.operation_name= operation_name
+        if generation_request.postprocess_config:
+            postprocessing_result = self.postprocessor.postprocess( generation_result.content, generation_request.postprocess_config)
+            generation_result.postprocessing_result = postprocessing_result
+            if postprocessing_result.success:
+                generation_result.content = postprocessing_result.result
+            else:
+                generation_result.success = False
+                generation_result.error_message = postprocessing_result.error
+        else:
+            generation_result.postprocessing_result = None
 
         return generation_result
-
-
 
     def cost_calculator(self, input_token, output_token, model_name):
         if model_name not in gpt_models_input_cost or model_name not in gpt_models_output_cost:
@@ -308,3 +256,44 @@ class GenerationEngine:
             return None, success, elapsed_time
 
         return response, success, elapsed_time
+
+
+def main():
+    import logging
+
+    # Set up basic logging
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger('GenerationEngineExample')
+
+    # Initialize the GenerationEngine with a specific model (e.g., 'gpt-4')
+    gen_engine = GenerationEngine(logger=logger, model_name='gpt-4o')
+
+    # Define the unformatted prompt directly
+    unformatted_prompt = "Translate the following text to French:\n\n{text_to_translate}"
+
+    # Data for placeholders
+    data_for_placeholders = {
+        'text_to_translate': "Hello, how are you?"
+    }
+
+    # Create a GenerationRequest
+    generation_request = GenerationRequest(
+        data_for_placeholders=data_for_placeholders,
+        unformatted_prompt=unformatted_prompt,
+        operation_name='translate_to_french',
+        request_id='example_request_1'
+    )
+
+    # Generate the output
+    generation_result = gen_engine.generate_output(generation_request)
+
+    # Check if generation was successful
+    if generation_result.success:
+        print("Generated content:")
+        print(generation_result.content)
+    else:
+        print("Generation failed:")
+        print(f"Error: {generation_result.error_message}")
+
+if __name__ == '__main__':
+    main()

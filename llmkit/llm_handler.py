@@ -9,7 +9,7 @@ from tenacity import retry, stop_after_attempt, wait_random_exponential, retry_i
 import httpx
 import asyncio
 
-from langchain import OpenAI
+
 from langchain_openai import ChatOpenAI
 from langchain.chains import LLMChain
 from langchain_community.llms import Ollama
