@@ -1,6 +1,6 @@
 # LLMKit
 
-![logo](https://raw.githubusercontent.com/karaposu/llmkit/refs/heads/main/assets/logo_cropped.png)  
+<img src="https://raw.githubusercontent.com/karaposu/llmkit/refs/heads/main/assets/logo_cropped.png" alt="logo" width="200"/>
 
 
 LLMkit is developed (still ongoing) with the promise of creating a llm based text generation library which follows software development
