@@ -1,5 +1,8 @@
 # LLMKit
 
+![logo](https://raw.githubusercontent.com/karaposu/llmkit/refs/heads/main/assets/logo_cropped.png)  
+
+
 LLMkit is developed (still ongoing) with the promise of creating a llm based text generation library which follows software development
 best practices such 
 By emphasizing **Modularity and Separation of Concerns**, **Advanced Error Handling**, and **Modern Software Development Practices** in it's design, 
@@ -10,7 +13,7 @@ LLMKit offers a structured approach that stands out against more monolithic fram
 
 ### Architecture
 
-![LLMKit Architecture](https://user-images.githubusercontent.com/your_image_url_here)  <!-- Replace with your image link if hosting it publicly or in the README repository. -->
+![LLMKit Architecture](https://raw.githubusercontent.com/karaposu/llmkit/refs/heads/main/assets/llmkit_architecture.png)  <!-- Replace with your image link if hosting it publicly or in the README repository. -->
 
 1. **LLM Handler**: Manages interaction with different LLM providers (e.g., OpenAI, Ollama, Azure).
 2. **Generation Engine**: Orchestrates the generation process, including prompt crafting, invoking the LLM, and post-processing.
