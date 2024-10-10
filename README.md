@@ -17,7 +17,7 @@ LLMKit offers a structured approach that stands out against more monolithic fram
 ![LLMKit Architecture](https://raw.githubusercontent.com/karaposu/llmkit/refs/heads/main/assets/llmkit_architecture.png)  <!-- Replace with your image link if hosting it publicly or in the README repository. -->
 
 1. **LLM Handler**: Manages interaction with different LLM providers (e.g., OpenAI, Ollama, Azure).
-2. **Generation Engine**: Orchestrates the generation process, including prompt crafting, invoking the LLM, and post-processing.
+2. **Generation Engine**: Orchestrates the generation process, including prompt crafting, invoking the LLM through llm handler, and post-processing.
 3. **Proteas**: A sophisticated prompt management system that loads and manages prompt templates from YAML files (`prompt.yaml`).
 4. **LLMService (Base Class)**: A base class that serves as a template for users to implement their custom service logic.  
 5. **App**: The application that consumes the services provided by LLMKit, receiving structured `generation_result` responses for further processing.

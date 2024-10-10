@@ -11,7 +11,7 @@ from datetime import datetime
 import json
 
 from langchain_core.prompts import PromptTemplate
-from llm_handler import  LLMHandler
+from .llm_handler import  LLMHandler
 from string2dict import String2Dict
 from indented_logger import setup_logging, log_indent
 from proteas import Proteas
@@ -90,11 +90,15 @@ class GenerationEngine:
             # self.logger.debug("OPENAI MODEL? : %s", self.llm_handler.OPENAI_MODEL)
 
         self.proteas = Proteas()
-        yaml_file = 'prompts.yaml'
-        self.proteas.load_unit_skeletons_from_yaml(yaml_file)
+        # yaml_file = 'prompts.yaml'
+        # self.proteas.load_unit_skeletons_from_yaml(yaml_file)
 
         if self.debug:
             pass
+
+    def load_prompts(self, yaml_file_path):
+        # yaml_file = 'prompts.yaml'
+        self.proteas.load_unit_skeletons_from_yaml(yaml_file_path)
 
     def pick_model(self, name_of_model):
         self.llm_handler.model_name=name_of_model
