@@ -1,9 +1,10 @@
 # LLMKit
 
-<img src="https://raw.githubusercontent.com/karaposu/llmkit/refs/heads/main/assets/logo_cropped.png" alt="logo" width="200"/>
+<div style="text-align: center;">
+    <img src="https://raw.githubusercontent.com/karaposu/llmkit/refs/heads/main/assets/logo_cropped.png" alt="logo" width="200"/>
+</div>
 
-
-LLMkit is developed (still ongoing) with the promise of creating a llm based text generation library which follows software development
+LLMkit is developed with the promise of creating a llm based text generation library which follows software development
 best practices such 
 By emphasizing **Modularity and Separation of Concerns**, **Advanced Error Handling**, and **Modern Software Development Practices** in it's design, 
 LLMKit offers a structured approach that stands out against more monolithic frameworks like LangChain.
