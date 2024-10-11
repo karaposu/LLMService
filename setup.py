@@ -6,7 +6,7 @@ import os
 setup(
     # name='LLM',  # Package name
     name='llmservice',  # Package name
-    version='0.0.3',  # Version of your package
+    version='0.0.4',  # Version of your package
     author='Enes Kuzucu',  # Your name
 
     description='for creating fast and easy llm apps',  # Short description
@@ -14,7 +14,7 @@ setup(
     long_description_content_type='text/markdown',  # Type of the long description
     packages=find_packages(),  # Automatically find packages in the directory
     install_requires=[
-        'langchain'
+        'langchain' ,
         'langchain-community',
         'langchain-openai',
         'proteas',
