@@ -4,8 +4,9 @@ import subprocess
 import os
 
 setup(
-    name='LLMkit',  # Package name
-    version='0.0.2',  # Version of your package
+    # name='LLM',  # Package name
+    name='llmservice',  # Package name
+    version='0.0.3',  # Version of your package
     author='Enes Kuzucu',  # Your name
 
     description='for creating fast and easy llm apps',  # Short description

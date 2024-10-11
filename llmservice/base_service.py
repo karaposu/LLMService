@@ -1,8 +1,8 @@
 # base_service.py
 
 from abc import ABC, abstractmethod
-from LLMkit.generation_engine import GenerationEngine, GenerationRequest, GenerationResult
-from LLMkit.usage_stats import UsageStats
+from llmservice.generation_engine import GenerationEngine, GenerationRequest, GenerationResult
+from llmservice.usage_stats import UsageStats
 import logging
 from typing import Optional, Union
 

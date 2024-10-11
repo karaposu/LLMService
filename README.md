@@ -50,7 +50,7 @@ LLMKit provides an abstract `BaseLLMService` class to guide users in implementin
 Install LLMKit via pip:
 
 ```bash
-pip install LLMkit
+pip install llmservice
 ```
 
 ## Quick Start
@@ -102,8 +102,8 @@ app logic with LLM relevant logics.
 You simply arange the names of your prompt template units in a list and pass this to generation engine.
 
 ```python
-from LLMkit.base_service import BaseLLMService
-from LLMkit.generation_engine import GenerationEngine
+from llmservice.base_service import BaseLLMService
+from llmservice.generation_engine import GenerationEngine
 import logging
 
 

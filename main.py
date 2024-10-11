@@ -2,7 +2,8 @@
 
 from tqdm import tqdm
 
-from llm_service import LLMService
+from examples.llm_service import MyLLMService
+from llmservice import generation_engine
 import time
 import re
 
@@ -40,7 +41,7 @@ file_path = 'Toplam.txt'
 paragraphs = read_paragraphs(file_path)
 print(len(paragraphs))
 
-llmservice= LLMService()
+llmservice= MyLLMService()
 # r=generation_engine.translate_to_russian(paragraphs[4])
 # print(r)
 
