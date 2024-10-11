@@ -4,12 +4,11 @@
     <img src="https://raw.githubusercontent.com/karaposu/llmkit/refs/heads/main/assets/logo_cropped.png" alt="logo" width="200"/>
 </div>
 
-LLMkit is developed with the promise of creating a llm based text generation library which follows software development
-best practices such 
-By emphasizing **Modularity and Separation of Concerns**, **Advanced Error Handling**, and **Modern Software Development Practices** in it's design, 
-LLMKit offers a structured approach that stands out against more monolithic frameworks like LangChain.
+LLMKit is a framework designed for building applications that leverage large language models (LLMs). It aims to provide a text generation library that adheres to established software development best practices. With a strong focus on **Modularity and Separation of Concerns**, **Robust Error Handling**, and **Modern Software Engineering Principles**, LLMKit delivers a well-structured alternative to more monolithic frameworks like LangChain.
 
 > "LangChain isn't a library, it's a collection of demos held together by duct tape, fstrings, and prayers."
+
+(This does not mean we don't appreciate Langchain. Also, current model invoke logic in LLMKit are langchain functions wrappers.)
 
 
 ### Architecture
@@ -51,7 +50,7 @@ LLMKit provides an abstract `BaseLLMService` class to guide users in implementin
 Install LLMKit via pip:
 
 ```bash
-pip install llmkit
+pip install LLMkit
 ```
 
 ## Quick Start
@@ -100,12 +99,13 @@ Create a new Python file (e.g., `my_llm_service.py`) and extend the `BaseLLMServ
 In your app all llm generation data flow will go through this class.  This is a good way of not coupling rest of your
 app logic with LLM relevant logics. 
 
-You simply arange the names of your prompt template units in a list and pass this to generation engine.  
+You simply arange the names of your prompt template units in a list and pass this to generation engine.
 
 ```python
-from llmkit.base_service import BaseLLMService
-from llmkit.generation_engine import GenerationEngine
+from LLMkit.base_service import BaseLLMService
+from LLMkit.generation_engine import GenerationEngine
 import logging
+
 
 class MyLLMService(BaseLLMService):
     def __init__(self, logger=None):
@@ -119,7 +119,7 @@ class MyLLMService(BaseLLMService):
         unformatted_prompt = self.generation_engine.craft_prompt(data_for_placeholders, order)
 
         generation_result = self.generation_engine.generate_output(
-            unformatted_prompt, 
+            unformatted_prompt,
             data_for_placeholders,
             response_type="string"
         )

@@ -1,5 +1,5 @@
-from llmkit.base_service import BaseLLMService
-from llmkit.generation_engine import GenerationEngine, GenerationRequest
+from LLMkit.base_service import BaseLLMService
+from LLMkit.generation_engine import GenerationEngine, GenerationRequest
 import logging
 
 class MyLLMService(BaseLLMService):
