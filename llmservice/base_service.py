@@ -51,6 +51,27 @@ class BaseLLMService(ABC):
 
         return generation_result
 
+    async def execute_generation_async(
+            self,
+            generation_request: GenerationRequest,
+            operation_name: Optional[str] = None
+    ) -> GenerationResult:
+        """Asynchronously executes the generation and stores usage statistics."""
+        # Assign operation name and request ID
+        generation_request.operation_name = operation_name or generation_request.operation_name
+        generation_request.request_id = generation_request.request_id or self._generate_request_id()
+
+        # Perform the asynchronous generation
+        generation_result = await self.generation_engine.generate_output_async(generation_request)
+
+        # Ensure request_id is set in the result
+        generation_result.request_id = generation_request.request_id
+
+        # Store usage statistics
+        self._store_usage(generation_result)
+
+        return generation_result
+
     def load_prompts(self, yaml_file_path: str):
         """Loads prompts from a YAML file."""
         self.generation_engine.load_prompts(yaml_file_path)
