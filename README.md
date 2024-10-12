@@ -1,19 +1,23 @@
-# LLMKit
+# LLMService
 
 <div style="text-align: center;">
     <img src="https://raw.githubusercontent.com/karaposu/llmkit/refs/heads/main/assets/logo_cropped.png" alt="logo" width="200"/>
 </div>
 
-LLMKit is a framework designed for building applications that leverage large language models (LLMs). It aims to provide a text generation library that adheres to established software development best practices. With a strong focus on **Modularity and Separation of Concerns**, **Robust Error Handling**, and **Modern Software Engineering Principles**, LLMKit delivers a well-structured alternative to more monolithic frameworks like LangChain.
+LLMService is a framework designed for building applications that leverage large language models (LLMs). It aims to provide a text generation library that adheres to established software development best practices. With a strong focus on **Modularity and Separation of Concerns**, **Robust Error Handling**, and **Modern Software Engineering Principles**, LLMKit delivers a well-structured alternative to more monolithic frameworks like LangChain.
 
 > "LangChain isn't a library, it's a collection of demos held together by duct tape, fstrings, and prayers."
 
-(This does not mean we don't appreciate Langchain. Also, current model invoke logic in LLMKit are langchain functions wrappers.)
+- Designed with 'Result Monad' design.  This way while we are minimazing the expose, user can implement their control mechanism for all key events via returned dataclass
+- Supports ratelimit aware async request. This is possible because of the usage of baseservice class logic. ALl llm generation logic is passing through one class enable us to keep track of ratelimits internally.  And this info is used to dynamically alter asnyc workers at any moment. 
+- Supports batch requests 
+- 
+
 
 
 ### Architecture
 
-![LLMKit Architecture](https://raw.githubusercontent.com/karaposu/llmkit/refs/heads/main/assets/llmkit_architecture.png)  <!-- Replace with your image link if hosting it publicly or in the README repository. -->
+![LLMService Architecture](https://raw.githubusercontent.com/karaposu/llmkit/refs/heads/main/assets/llmkit_architecture.png)  <!-- Replace with your image link if hosting it publicly or in the README repository. -->
 
 1. **LLM Handler**: Manages interaction with different LLM providers (e.g., OpenAI, Ollama, Azure).
 2. **Generation Engine**: Orchestrates the generation process, including prompt crafting, invoking the LLM through llm handler, and post-processing.

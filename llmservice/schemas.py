@@ -5,14 +5,18 @@ from typing import Any, Dict, Optional, Union, Literal
 
 @dataclass
 class GenerationRequest:
+
     data_for_placeholders: Dict[str, Any]
     unformatted_prompt: str
+    model: Optional[str] = None
     output_type: Literal["json", "str"] = "str"
     use_string2dict: bool = False
     operation_name: Optional[str] = None
     postprocess_config: Optional[Dict[str, Any]] = field(default_factory=dict)
     answer_isolator_refinement_config: Optional[Dict[str, Any]] = field(default_factory=dict)
     request_id: Optional[Union[str, int]] = None
+
+
 
 
 @dataclass

@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 import logging
 from dotenv import load_dotenv
-from tenacity import retry, stop_after_attempt, wait_random_exponential, retry_if_exception_type, RetryCallState
+from tenacity import retry, stop_after_attempt, wait_random_exponential, retry_if_exception_type, RetryCallState, AsyncRetrying
 
 import httpx
 import asyncio
@@ -46,6 +46,7 @@ class LLMHandler:
         self.max_retries = 2  # Set the maximum retries allowed
 
         self.OPENAI_MODEL = False
+        self._llm_cache = {}
 
         if self.is_it_gpt_model(model_name):
             self.OPENAI_MODEL= True
@@ -57,6 +58,21 @@ class LLMHandler:
 
     def change_model(self, model_name):
         self.llm = self._initialize_llm(model_name)
+
+    # def _initialize_llm(self, model_name: str):
+    #     if model_name in self._llm_cache:
+    #         return self._llm_cache[model_name]
+    #
+    #     if self.is_it_gpt_model(model_name):
+    #         llm = ChatOpenAI(api_key=os.getenv("OPENAI_API_KEY"),
+    #                          model_name=model_name)
+    #     elif model_name == "custom":
+    #         llm = ""
+    #     else:
+    #         llm = Ollama(model=model_name)
+    #
+    #     self._llm_cache[model_name] = llm
+    #     return llm
 
     def _initialize_llm(self, model_name: str):
 
@@ -148,17 +164,34 @@ class LLMHandler:
             self.logger.error(f"An error occurred: {e}")
             raise
 
+    # async def invoke_async(self, prompt: str):
+    #     try:
+    #         if self.system_prompt:
+    #             response = await self.llm.agenerate([prompt], system_prompt=self.system_prompt)
+    #         else:
+    #             response = await self.llm.agenerate([prompt])
+    #         success = True
+    #         return response.generations[0][0], success
+    #     except Exception as e:
+    #         self.logger.error(f"An error occurred: {e}")
+    #         return str(e), False
     async def invoke_async(self, prompt: str):
-        try:
-            if self.system_prompt:
-                response = await self.llm.agenerate([prompt], system_prompt=self.system_prompt)
-            else:
-                response = await self.llm.agenerate([prompt])
-            success = True
-            return response.generations[0][0], success
-        except Exception as e:
-            self.logger.error(f"An error occurred: {e}")
-            return str(e), False
+        async for attempt in AsyncRetrying(
+                retry=retry_if_exception_type((httpx.HTTPStatusError, RateLimitError)),
+                stop=stop_after_attempt(2),
+                wait=wait_random_exponential(min=1, max=60)
+        ):
+            with attempt:
+                try:
+                    if self.system_prompt:
+                        response = await self.llm.acall(prompt=prompt, context=self.system_prompt)
+                    else:
+                        response = await self.llm.acall(prompt)
+                    success = True
+                    return response, success
+                except Exception as e:
+                    self.logger.error(f"An error occurred: {e}")
+                    raise
 
     def _retry_count_is_max(self, retry_state: RetryCallState) -> bool:
         """

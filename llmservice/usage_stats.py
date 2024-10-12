@@ -1,4 +1,4 @@
-# from usage_stats import UsageStats
+# usage_stats.py
 
 class UsageStats:
     def __init__(self, model=None):
