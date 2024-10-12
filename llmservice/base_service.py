@@ -7,11 +7,11 @@ import logging
 from typing import Optional, Union
 
 class BaseLLMService(ABC):
-    def __init__(self, logger: Optional[logging.Logger] = None):
+    def __init__(self, logger: Optional[logging.Logger] = None, model_name: str = "default-model"):
         self.logger = logger or logging.getLogger(__name__)
-        self.generation_engine = GenerationEngine(logger=self.logger)
+        self.generation_engine = GenerationEngine(logger=self.logger, model_name=model_name)
         self.usage_stats = UsageStats()
-        self.request_id_counter = 0  # Simple counter for internal request IDs
+        self.request_id_counter = 0
 
     def _generate_request_id(self) -> int:
         """Generates a unique request ID."""
