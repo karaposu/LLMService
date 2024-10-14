@@ -12,11 +12,9 @@ from proteas import Proteas  # Ensure this is installed or available
 from langchain_core.prompts import PromptTemplate
 from langchain_core.prompts.string import get_template_variables
 
-
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
 
 # Costs per model (example values, adjust as needed)
 gpt_models_input_cost = {
@@ -102,76 +100,29 @@ class GenerationEngine:
         generation_result = self.generate(
             unformatted_template=unformatted_prompt,
             data_for_placeholders=placeholders,
-            model_name=generation_request.model
+            model_name=generation_request.model,
+            request_id=generation_request.request_id,
+            operation_name=generation_request.operation_name
         )
-
-        # Assign request_id and operation_name
-        generation_result.request_id = generation_request.request_id
-        generation_result.operation_name = generation_request.operation_name
 
         # Postprocessing
         if generation_request.postprocess_config:
-            postprocessing_result = self.postprocessor.postprocess(
-                generation_result.content, generation_request.postprocess_config)
-            generation_result.postprocessing_result = postprocessing_result
-            if postprocessing_result.success:
-                generation_result.content = postprocessing_result.result
-            else:
-                generation_result.success = False
-                generation_result.error_message = postprocessing_result.error
+            self.postprocessor.postprocess(generation_result, generation_request.postprocess_config)
         else:
             generation_result.postprocessing_result = None
 
         return generation_result
 
-    async def generate_output_async(self, generation_request: GenerationRequest) -> GenerationResult:
-        """
-        Asynchronously generates the output and processes postprocessing.
+    def generate(self,
+                 unformatted_template=None,
+                 data_for_placeholders=None,
+                 preprompts=None,
+                 debug=False,
+                 model_name=None,
+                 request_id=None,
+                 operation_name=None
+                 ):
 
-        :param generation_request: GenerationRequest object containing all necessary data.
-        :return: GenerationResult object with the output and metadata.
-        """
-        # Unpack the GenerationRequest
-        placeholders = generation_request.data_for_placeholders
-        unformatted_prompt = generation_request.unformatted_prompt
-
-        # Generate the output asynchronously
-        generation_result = await self.generate_async(
-            unformatted_template=unformatted_prompt,
-            data_for_placeholders=placeholders,
-            model_name=generation_request.model
-        )
-
-        # Assign request_id and operation_name
-        generation_result.request_id = generation_request.request_id
-        generation_result.operation_name = generation_request.operation_name
-
-        # Postprocessing
-        if generation_request.postprocess_config:
-            postprocessing_result = self.postprocessor.postprocess(
-                generation_result.content, generation_request.postprocess_config)
-            generation_result.postprocessing_result = postprocessing_result
-            if postprocessing_result.success:
-                generation_result.content = postprocessing_result.result
-            else:
-                generation_result.success = False
-                generation_result.error_message = postprocessing_result.error
-        else:
-            generation_result.postprocessing_result = None
-
-        return generation_result
-
-    def generate(self, unformatted_template=None, data_for_placeholders=None, preprompts=None, debug=False, model_name=None):
-        """
-        Synchronously generates the content using the LLMHandler.
-
-        :param unformatted_template: The unformatted prompt template.
-        :param data_for_placeholders: Data to fill the placeholders.
-        :param preprompts: Optional preprompts.
-        :param debug: Debug flag.
-        :param model_name: Model name to use.
-        :return: GenerationResult object.
-        """
         if preprompts:
             unformatted_prompt = self.proteas.craft(
                 units=preprompts,
@@ -219,7 +170,9 @@ class GenerationEngine:
                 elapsed_time=0,
                 error_message="LLM invocation failed",
                 model=llm_handler.model_name,
-                formatted_prompt=formatted_prompt
+                formatted_prompt=formatted_prompt,
+                request_id=request_id,
+                operation_name=operation_name
             )
 
         t2 = time.time()
@@ -239,7 +192,10 @@ class GenerationEngine:
                     elapsed_time=elapsed_time_for_invoke,
                     error_message="Token usage metadata missing",
                     model=llm_handler.model_name,
-                    formatted_prompt=formatted_prompt
+                    formatted_prompt=formatted_prompt,
+                    request_id=request_id,
+                    operation_name=operation_name
+
                 )
 
             input_cost, output_cost = self.cost_calculator(
@@ -255,102 +211,81 @@ class GenerationEngine:
             elapsed_time=elapsed_time_for_invoke,
             error_message=None,
             model=llm_handler.model_name,
-            formatted_prompt=formatted_prompt
+            formatted_prompt=formatted_prompt,
+            request_id=request_id,
+            operation_name=operation_name
         )
 
-    async def generate_async(self, unformatted_template=None, data_for_placeholders=None, preprompts=None, debug=False, model_name=None):
-        """
-        Asynchronously generates the content using the LLMHandler.
+# Add the main() function with examples
+def main():
+    import logging
+    from dotenv import load_dotenv
+    load_dotenv()
 
-        :param unformatted_template: The unformatted prompt template.
-        :param data_for_placeholders: Data to fill the placeholders.
-        :param preprompts: Optional preprompts.
-        :param debug: Debug flag.
-        :param model_name: Model name to use.
-        :return: GenerationResult object.
-        """
-        if preprompts:
-            unformatted_prompt = self.proteas.craft(
-                units=preprompts,
-                placeholder_dict=data_for_placeholders,
-            )
-        else:
-            unformatted_prompt = unformatted_template
 
-        meta = {
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "total_tokens": 0,
-            "elapsed_time_for_invoke": 0,
-            "input_cost": 0,
-            "output_cost": 0,
-            "total_cost": 0,
-        }
+    # Set up basic logging
+    logging.basicConfig(level=logging.DEBUG)
+    logger = logging.getLogger('GenerationEngineTest')
 
-        t0 = time.time()
+    # Initialize the GenerationEngine
+    generation_engine = GenerationEngine(model_name='gpt-4o', logger=logger)
 
-        # Validate placeholders
-        existing_placeholders = get_template_variables(unformatted_prompt, "f-string")
-        missing_placeholders = set(existing_placeholders) - set(data_for_placeholders.keys())
+    # Example 1: Simple generation without postprocessing
+    placeholders = {'input_text': 'Hello, how are you?'}
+    unformatted_prompt = 'Translate the following text to French: {input_text}'
 
-        if missing_placeholders:
-            raise ValueError(f"Missing data for placeholders: {missing_placeholders}")
+    gen_request = GenerationRequest(
+        data_for_placeholders=placeholders,
+        unformatted_prompt=unformatted_prompt,
+        model='gpt-4o',
+        postprocess_config=None,  # No postprocessing
+        request_id=1,
+        operation_name='translate_to_french'
+    )
 
-        # Format the prompt
-        prompt_template = PromptTemplate.from_template(unformatted_prompt)
-        formatted_prompt = prompt_template.format(**data_for_placeholders)
+    generation_result = generation_engine.generate_output(gen_request)
 
-        t1 = time.time()
+    if generation_result.success:
+        print("\nExample 1 - Generated Content:")
+        print(generation_result.content)
+    else:
+        print("\nExample 1 - Error:")
+        print(generation_result.error_message)
 
-        # Initialize LLMHandler with the model_name
-        llm_handler = LLMHandler(model_name=model_name or self.llm_handler.model_name, logger=self.logger)
+    # Example 2: Generation with postprocessing
+    placeholders = {'input_text': 'The answer is 42.'}
 
-        # Invoke the LLM asynchronously
-        r, success = await llm_handler.invoke_async(prompt=formatted_prompt)
+    unformatted_prompt = 'Extract the number from the following text: {input_text} Respond in JSON format like {{"number": value}}.'
 
-        if not success:
-            return GenerationResult(
-                success=False,
-                meta=meta,
-                content=None,
-                elapsed_time=0,
-                error_message="LLM invocation failed",
-                model=llm_handler.model_name,
-                formatted_prompt=formatted_prompt
-            )
+    postprocess_config = {
+        'pipeline': [
+            {
+                'type': 'ConvertToDict',
+            },
+            {
+                'type': 'ExtractValue',
+                'params': {'key': 'number'}
+            }
+        ]
+    }
 
-        t2 = time.time()
-        elapsed_time_for_invoke = t2 - t1
-        meta["elapsed_time_for_invoke"] = elapsed_time_for_invoke
+    gen_request = GenerationRequest(
+        data_for_placeholders=placeholders,
+        unformatted_prompt=unformatted_prompt + ' Respond in JSON format like {{"number": value}}.',
+        model='gpt-4o',
+        postprocess_config=postprocess_config,
+        request_id=2,
+        operation_name='extract_number'
+    )
 
-        if llm_handler.OPENAI_MODEL:
-            try:
-                meta["input_tokens"] = r.usage_metadata["input_tokens"]
-                meta["output_tokens"] = r.usage_metadata["output_tokens"]
-                meta["total_tokens"] = r.usage_metadata["total_tokens"]
-            except KeyError as e:
-                return GenerationResult(
-                    success=False,
-                    meta=meta,
-                    content=None,
-                    elapsed_time=elapsed_time_for_invoke,
-                    error_message="Token usage metadata missing",
-                    model=llm_handler.model_name,
-                    formatted_prompt=formatted_prompt
-                )
+    generation_result = generation_engine.generate_output(gen_request)
 
-            input_cost, output_cost = self.cost_calculator(
-                meta["input_tokens"], meta["output_tokens"], llm_handler.model_name)
-            meta["input_cost"] = input_cost
-            meta["output_cost"] = output_cost
-            meta["total_cost"] = input_cost + output_cost
+    if generation_result.success:
+        print("\nExample 2 - Postprocessed Content:")
+        print(generation_result.content)
+    else:
+        print("\nExample 2 - Error:")
+        print(generation_result.error_message)
 
-        return GenerationResult(
-            success=True,
-            meta=meta,
-            content=r.content,
-            elapsed_time=elapsed_time_for_invoke,
-            error_message=None,
-            model=llm_handler.model_name,
-            formatted_prompt=formatted_prompt
-        )
+if __name__ == '__main__':
+    main()

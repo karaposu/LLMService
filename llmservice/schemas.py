@@ -32,6 +32,8 @@ class PostprocessingResult:
     string_match_result: Optional[bool] = None
     json_load_status: bool = False
     json_load_result: Optional[Dict[str, Any]] = None
+    semantic_isolation: bool = False
+
 
 
 @dataclass
