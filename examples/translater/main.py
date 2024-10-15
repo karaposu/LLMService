@@ -27,15 +27,17 @@ def process_statements_sync(statements):
     for idx, statement in enumerate(statements):
         result = service.translate_to_russian(input_paragraph=statement, request_id=idx)
         if result.success:
-            print(f"Translated content: {result.content}")
+            print(f"Translated content for statement {idx}: {result.content}")
         else:
-            print(f"Error: {result.error_message}")
+            print(f"Error in statement {idx}: {result.error_message}")
+
 
 if __name__ == "__main__":
     bank_statements = ["Bank statement 1", "Bank statement 2", "Bank statement 3"]
+    process_statements_sync(bank_statements)
 
     # For asynchronous processing
-    asyncio.run(process_statements_async(bank_statements))
+    #asyncio.run(process_statements_async(bank_statements))
 
     # For synchronous processing
     # process_statements_sync(bank_statements)

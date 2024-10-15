@@ -6,12 +6,11 @@ from typing import Optional, Dict, Any, List, Union
 from dataclasses import dataclass, field
 
 from llmservice.llm_handler import LLMHandler  # Ensure this is correctly imported
+from llmservice.schemas import GenerationRequest, GenerationResult  # Ensure this is correctly imported
 from string2dict import String2Dict  # Ensure this is installed and available
 from proteas import Proteas  # Ensure this is installed and available
 from langchain_core.prompts import PromptTemplate
 from langchain_core.prompts.string import get_template_variables
-
-from .schemas import GenerationRequest, GenerationResult, PostprocessingResult , PipelineStepResult
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -20,31 +19,67 @@ logger = logging.getLogger(__name__)
 # Costs per model (example values, adjust as needed)
 gpt_models_input_cost = {
     'gpt-4o': 5 / 1_000_000,
+    "gpt-4o-2024-08-06": 2.5 / 1_000_000,
+    'gpt-4o-mini': 0.15 / 1_000_000,
+    'o1-preview': 15 / 1_000_000,
+    'o1-mini': 3 / 1_000_000,
     'gpt-3.5-turbo': 0.0015 / 1_000,  # Example cost per token
-    # Add other models as needed
 }
 
 gpt_models_output_cost = {
     'gpt-4o': 15 / 1_000_000,
+    "gpt-4o-2024-08-06": 10 / 1_000_000,
+    'gpt-4o-mini': 0.6 / 1_000_000,
+    'o1-preview': 60 / 1_000_000,
+    'o1-mini': 12 / 1_000_000,
     'gpt-3.5-turbo': 0.002 / 1_000,  # Example cost per token
-    # Add other models as needed
 }
 
+@dataclass
+class PipelineStepResult:
+    step_type: str
+    success: bool
+    content_before: Any
+    content_after: Any
+    error_message: Optional[str] = None
+    meta: Dict[str, Any] = field(default_factory=dict)
 
+@dataclass
+class GenerationRequest:
+    data_for_placeholders: Dict[str, Any]
+    unformatted_prompt: str
+    model: Optional[str] = None
+    pipeline_config: List[Dict[str, Any]] = field(default_factory=list)
+    request_id: Optional[Union[str, int]] = None
+    operation_name: Optional[str] = None
 
-# @dataclass
-# class GenerationRequest:
-#     data_for_placeholders: Dict[str, Any]
-#     unformatted_prompt: str
-#     model: Optional[str] = None
-#     pipeline_config: List[Dict[str, Any]] = field(default_factory=list)
-#     request_id: Optional[Union[str, int]] = None
-#     operation_name: Optional[str] = None
-
-
+@dataclass
+class GenerationResult:
+    success: bool
+    meta: Dict[str, Any] = field(default_factory=dict)
+    content: Optional[Any] = None  # Changed to Any to accommodate different data types
+    raw_content: Optional[str] = None
+    elapsed_time: Optional[float] = None
+    error_message: Optional[str] = None
+    model: Optional[str] = None
+    formatted_prompt: Optional[str] = None
+    unformatted_prompt: Optional[str] = None
+    operation_name: Optional[str] = None
+    request_id: Optional[Union[str, int]] = None
+    response_type: Optional[str] = None
+    number_of_retries: Optional[int] = None
+    pipeline_steps_results: List[PipelineStepResult] = field(default_factory=list)
 
 class GenerationEngine:
     def __init__(self, llm_handler=None, model_name=None, logger=None, debug=False):
+        """
+        Initializes the GenerationEngine.
+
+        :param llm_handler: Optional LLMHandler instance.
+        :param model_name: Default model name to use.
+        :param logger: Optional logger instance.
+        :param debug: Debug flag.
+        """
         self.logger = logger or logging.getLogger(__name__)
         self.debug = debug
         self.s2d = String2Dict()
@@ -121,9 +156,6 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         # Process the output using the pipeline
         if generation_request.pipeline_config:
             generation_result = self.execute_pipeline(generation_result, generation_request.pipeline_config)
-        else:
-            # No postprocessing; assign raw_content to content
-            generation_result.content = generation_result.raw_content
 
         return generation_result
 
@@ -135,7 +167,7 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         :param pipeline_config: List of processing steps.
         :return: Updated GenerationResult after processing.
         """
-        current_content = generation_result.raw_content
+        current_content = generation_result.content
         for step_config in pipeline_config:
             step_type = step_config.get('type')
             params = step_config.get('params', {})
@@ -205,7 +237,7 @@ Provide the answer strictly in the following JSON format, do not combine anythin
             raise ValueError(f"Semantic isolation failed: {refiner_result.error_message}")
 
         # Parse the LLM response to extract 'answer'
-        s2d_result = self.s2d.run(refiner_result.raw_content)
+        s2d_result = self.s2d.run(refiner_result.content)
         isolated_answer = s2d_result.get('answer')
         if isolated_answer is None:
             raise ValueError("Isolated answer not found in the LLM response.")
@@ -261,7 +293,7 @@ Provide the answer strictly in the following JSON format, do not combine anythin
             raise ValueError(f"JSON loading failed: {e}")
 
     # Implement the generate method
-    def generate(self, unformatted_template, data_for_placeholders, model_name=None, request_id=None, operation_name=None) -> GenerationResult:
+    def generate(self, unformatted_template, data_for_placeholders, model_name=None, request_id=None, operation_name=None):
         """
         Generates content using the LLMHandler.
 
@@ -307,7 +339,6 @@ Provide the answer strictly in the following JSON format, do not combine anythin
             return GenerationResult(
                 success=False,
                 meta=meta,
-                raw_content=None,
                 content=None,
                 elapsed_time=0,
                 error_message="LLM invocation failed",
@@ -330,7 +361,6 @@ Provide the answer strictly in the following JSON format, do not combine anythin
                 return GenerationResult(
                     success=False,
                     meta=meta,
-                    raw_content=None,
                     content=None,
                     elapsed_time=elapsed_time_for_invoke,
                     error_message="Token usage metadata missing",
@@ -349,8 +379,7 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         return GenerationResult(
             success=True,
             meta=meta,
-            raw_content=r.content,  # Assign initial LLM output
-            content=None,           # Will be assigned after postprocessing
+            content=r.content,
             elapsed_time=elapsed_time_for_invoke,
             error_message=None,
             model=llm_handler.model_name,
@@ -363,11 +392,17 @@ Provide the answer strictly in the following JSON format, do not combine anythin
 def main():
     import logging
 
+    # Set up basic logging
     logging.basicConfig(level=logging.DEBUG)
     logger = logging.getLogger('GenerationEngineTest')
 
+    # Initialize the GenerationEngine
     generation_engine = GenerationEngine(model_name='gpt-4o', logger=logger)
 
+    # Load prompts if needed
+    # generation_engine.load_prompts('prompts.yaml')  # Ensure prompts are loaded if using Proteas
+
+    # Example: Generation with Semantic Isolation and Postprocessing
     placeholders = {'input_text': 'Patient shows symptoms of severe headache and nausea.'}
     unformatted_prompt = 'Provide a summary of the following clinical note: {input_text}'
 
@@ -377,9 +412,19 @@ def main():
             'params': {
                 'semantic_element_for_extraction': 'symptoms'
             }
-        },
-        # You can add more steps here if needed
+        }
+        # {
+        #     'type': 'ConvertToDict',
+        #     'params': {}
+        # },
+        # {
+        #     'type': 'ExtractValue',
+        #     'params': {'key': 'nonexistent_key'}  # This key doesn't exist and will cause an error
+        # }
     ]
+
+    print("prompt_template:", )
+    print("-------------------------------")
 
     gen_request = GenerationRequest(
         data_for_placeholders=placeholders,
@@ -392,14 +437,17 @@ def main():
 
     generation_result = generation_engine.generate_output(gen_request)
 
+
     if generation_result.success:
+
         logger.info("Final Result:")
         logger.info(generation_result.content)
-        logger.info("Raw LLM Output:")
-        logger.info(generation_result.raw_content)
+
     else:
+
         logger.info("Error:")
         logger.info(generation_result.error_message)
+
 
     logger.info("Pipeline Steps Results")
     for step_result in generation_result.pipeline_steps_results:
@@ -407,10 +455,10 @@ def main():
         logger.info(f"Success {step_result.success}")
 
         if step_result.success:
-            logger.info(f"Content Before: {step_result.content_before}")
-            logger.info(f"Content After: {step_result.content_after}")
+            logger.info(f"Content Before {step_result.content_before}")
+            logger.info(f"Content After {step_result.content_after}")
         else:
-            logger.info(f"Error: {step_result.error_message}")
+            logger.info(f"Error  {step_result.error_message}")
 
 if __name__ == '__main__':
     main()

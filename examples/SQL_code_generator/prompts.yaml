@@ -1,0 +1,19 @@
+main:
+
+
+  - name: "my_database_schema"
+    statement_suffix: "Here is"
+    question_suffix: "What is "
+    placeholder_proclamation: my database schema
+    placeholder: "my_database_schema"
+
+  - name: "user_nlp_query"
+    statement_suffix: "Here is"
+    placeholder_proclamation: what i want to learn
+    placeholder: "user_nlp_query"
+
+  - name: "generate_sql_code"
+    info: >
+      I want you to generate a SQL query  
+   
+
