@@ -17,18 +17,17 @@ from .schemas import GenerationRequest, GenerationResult, PostprocessingResult ,
 logger = logging.getLogger(__name__)
 
 # Costs per model (example values, adjust as needed)
-gpt_models_input_cost = {
-    'gpt-4o': 5 / 1_000_000,
-    'gpt-3.5-turbo': 0.0015 / 1_000,  # Example cost per token
-    # Add other models as needed
-}
+gpt_models_input_cost = {'gpt-4o': 5 / 1000000,
+                         "gpt-4o-2024-08-06": 2.5 / 1000000,
+                         'gpt-4o-mini': 0.15 / 1000000,
+                         'o1-preview': 15 / 1000000,
+                         'o1-mini': 3 / 1000000}
 
-gpt_models_output_cost = {
-    'gpt-4o': 15 / 1_000_000,
-    'gpt-3.5-turbo': 0.002 / 1_000,  # Example cost per token
-    # Add other models as needed
-}
-
+gpt_models_output_cost = {'gpt-4o': 15 / 1000000,
+                          "gpt-4o-2024-08-06":   10 / 1000000,
+                          'gpt-4o-mini': 0.6 / 1000000,
+                          'o1-preview': 60 / 1000000,
+                          'o1-mini': 12 / 1000000}
 
 
 class GenerationEngine:
