@@ -15,7 +15,7 @@ class BaseLLMService(ABC):
     def __init__(
         self,
         logger: Optional[logging.Logger] = None,
-        model_name: str = "default-model",
+        default_model_name: str = "default-model",
         yaml_file_path: Optional[str] = None,
         rpm_window_seconds: int = 60,
         max_rpm: int = 60,
@@ -25,15 +25,15 @@ class BaseLLMService(ABC):
         Base class for LLM services.
 
         :param logger: Optional logger instance.
-        :param model_name: Default model name to use.
+        :param default_model_name: Default model name to use.
         :param yaml_file_path: Path to the YAML file containing prompts.
         :param rpm_window_seconds: Time window in seconds for RPM calculation.
         :param max_rpm: Maximum allowed Requests Per Minute.
         :param max_concurrent_requests: Maximum number of concurrent asynchronous requests.
         """
         self.logger = logger or logging.getLogger(__name__)
-        self.generation_engine = GenerationEngine(logger=self.logger, model_name=model_name)
-        self.usage_stats = UsageStats(model=model_name)
+        self.generation_engine = GenerationEngine(logger=self.logger, model_name=default_model_name)
+        self.usage_stats = UsageStats(model=default_model_name)
         self.request_id_counter = 0
         self.request_timestamps = deque()
         self.rpm_window_seconds = rpm_window_seconds

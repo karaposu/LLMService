@@ -15,7 +15,7 @@ class MyLLMService(BaseLLMService):
 
         super().__init__(
             logger=logger,
-            model_name="gpt-4o",
+            default_model_name="gpt-4o",
             yaml_file_path=yaml_file_path,
             max_rpm=60,
             max_concurrent_requests=max_concurrent_requests,

@@ -10,7 +10,7 @@ class MyLLMService(BaseLLMService):
     def __init__(self, logger=None, max_concurrent_requests=5):
         super().__init__(
             logger=logger,
-            model_name="gpt-4o",
+            default_model_name="gpt-4o",
             yaml_file_path='prompts.yaml',
             max_rpm=60,
             max_concurrent_requests=max_concurrent_requests,
