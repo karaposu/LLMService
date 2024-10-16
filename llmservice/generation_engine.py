@@ -13,8 +13,7 @@ from langchain_core.prompts.string import get_template_variables
 
 from .schemas import GenerationRequest, GenerationResult, PostprocessingResult , PipelineStepResult
 
-# Setup logging
-logging.basicConfig(level=logging.INFO)
+
 logger = logging.getLogger(__name__)
 
 # Costs per model (example values, adjust as needed)
@@ -32,20 +31,9 @@ gpt_models_output_cost = {
 
 
 
-# @dataclass
-# class GenerationRequest:
-#     data_for_placeholders: Dict[str, Any]
-#     unformatted_prompt: str
-#     model: Optional[str] = None
-#     pipeline_config: List[Dict[str, Any]] = field(default_factory=list)
-#     request_id: Optional[Union[str, int]] = None
-#     operation_name: Optional[str] = None
-
-
-
 class GenerationEngine:
-    def __init__(self, llm_handler=None, model_name=None, logger=None, debug=False):
-        self.logger = logger or logging.getLogger(__name__)
+    def __init__(self, llm_handler=None, model_name=None, debug=False):
+        self.logger = logging.getLogger(__name__)
         self.debug = debug
         self.s2d = String2Dict()
 
@@ -69,6 +57,11 @@ Provide the answer strictly in the following JSON format, do not combine anythin
 
 'answer': 'here_is_isolated_answer'
 """
+
+    def _debug(self, message):
+
+        if self.debug:
+            self.logger.debug(message)
 
     def load_prompts(self, yaml_file_path):
         """Loads prompts from a YAML file using Proteas."""
@@ -336,6 +329,7 @@ Provide the answer strictly in the following JSON format, do not combine anythin
                     error_message="Token usage metadata missing",
                     model=llm_handler.model_name,
                     formatted_prompt=formatted_prompt,
+                    unformatted_prompt=unformatted_template,
                     request_id=request_id,
                     operation_name=operation_name
                 )
@@ -355,6 +349,7 @@ Provide the answer strictly in the following JSON format, do not combine anythin
             error_message=None,
             model=llm_handler.model_name,
             formatted_prompt=formatted_prompt,
+            unformatted_prompt=unformatted_template,
             request_id=request_id,
             operation_name=operation_name
         )
@@ -363,10 +358,16 @@ Provide the answer strictly in the following JSON format, do not combine anythin
 def main():
     import logging
 
-    logging.basicConfig(level=logging.DEBUG)
-    logger = logging.getLogger('GenerationEngineTest')
+    import sys
 
-    generation_engine = GenerationEngine(model_name='gpt-4o', logger=logger)
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        stream=sys.stdout
+    )
+
+
+    generation_engine = GenerationEngine(model_name='gpt-4o')
 
     placeholders = {'input_text': 'Patient shows symptoms of severe headache and nausea.'}
     unformatted_prompt = 'Provide a summary of the following clinical note: {input_text}'
