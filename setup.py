@@ -6,7 +6,7 @@ import os
 setup(
     # name='LLM',  # Package name
     name='llmservice',  # Package name
-    version='0.1.1',  # Version of your package
+    version='0.1.2',  # Version of your package
     author='Enes Kuzucu',  # Your name
 
     description='for creating fast and easy llm apps',  # Short description

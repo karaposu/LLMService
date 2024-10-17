@@ -107,6 +107,8 @@ Provide the answer strictly in the following JSON format, do not combine anythin
             operation_name=generation_request.operation_name
         )
 
+        generation_result.generation_request=generation_request
+
         if not generation_result.success:
             return generation_result
 
