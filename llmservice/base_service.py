@@ -20,6 +20,7 @@ class BaseLLMService(ABC):
         rpm_window_seconds: int = 60,
         max_rpm: int = 60,
         max_concurrent_requests: int = 5,
+        default_number_of_retries: int = 2,
     ):
         """
         Base class for LLM services.
@@ -32,7 +33,7 @@ class BaseLLMService(ABC):
         :param max_concurrent_requests: Maximum number of concurrent asynchronous requests.
         """
         self.logger = logger or logging.getLogger(__name__)
-        self.generation_engine = GenerationEngine(logger=self.logger, model_name=default_model_name)
+        self.generation_engine = GenerationEngine( model_name=default_model_name)
         self.usage_stats = UsageStats(model=default_model_name)
         self.request_id_counter = 0
         self.request_timestamps = deque()
@@ -40,6 +41,8 @@ class BaseLLMService(ABC):
         self.max_rpm = max_rpm
         self.max_concurrent_requests = max_concurrent_requests
         self.semaphore = asyncio.Semaphore(self.max_concurrent_requests)
+
+        self.default_number_of_retries=default_number_of_retries
 
         if yaml_file_path:
             self.load_prompts(yaml_file_path)

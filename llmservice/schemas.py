@@ -20,6 +20,7 @@ class GenerationRequest:
     postprocess_config: Optional[Dict[str, Any]] = field(default_factory=dict)
     answer_isolator_refinement_config: Optional[Dict[str, Any]] = field(default_factory=dict)
     request_id: Optional[Union[str, int]] = None
+    number_of_retries: Optional[int] = None
     pipeline_config: List[Dict[str, Any]] = field(default_factory=list)
 
 @dataclass
