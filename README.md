@@ -4,9 +4,6 @@
     <img src="https://raw.githubusercontent.com/karaposu/llmkit/refs/heads/main/assets/logo_cropped.png" alt="logo" width="200"/>
 </div>
 
-<div style="text-align: center;">
-    <img src="https://raw.githubusercontent.com/karaposu/llmkit/refs/heads/main/assets/schemas.png" alt="logo" width="100"/>
-</div>
 
 LLMService is a framework designed for building applications that leverage large language models (LLMs). It aims to provide a text generation library that adheres to established software development best practices. With a strong focus on **Modularity and Separation of Concerns**, **Robust Error Handling**, and **Modern Software Engineering Principles**, LLMService delivers a well-structured alternative to more monolithic frameworks like LangChain.
 
@@ -21,7 +18,12 @@ LLMService is a framework designed for building applications that leverage large
 
 ### Architecture
 
-![LLMService Architecture](https://raw.githubusercontent.com/karaposu/LLMService/refs/heads/main/assets/llmservice_architecture1.png)  <!-- Replace with your image link if hosting it publicly or in the README repository. -->
+![LLMService Architecture](https://raw.githubusercontent.com/karaposu/LLMService/refs/heads/main/assets/llmservice_architecture1.png) 
+
+![schemas](https://raw.githubusercontent.com/karaposu/LLMService/refs/heads/main/assets/schemas.png)  
+
+
+
 
 1. **LLM Handler**: Manages interaction with different LLM providers (e.g., OpenAI, Ollama, Azure).
 2. **Generation Engine**: Orchestrates the generation process, including prompt crafting, invoking the LLM through llm handler, and post-processing.
