@@ -4,7 +4,7 @@
     <img src="https://raw.githubusercontent.com/karaposu/llmkit/refs/heads/main/assets/logo_cropped.png" alt="logo" width="200"/>
 </div>
 
-LLMService is a framework designed for building applications that leverage large language models (LLMs). It aims to provide a text generation library that adheres to established software development best practices. With a strong focus on **Modularity and Separation of Concerns**, **Robust Error Handling**, and **Modern Software Engineering Principles**, LLMKit delivers a well-structured alternative to more monolithic frameworks like LangChain.
+LLMService is a framework designed for building applications that leverage large language models (LLMs). It aims to provide a text generation library that adheres to established software development best practices. With a strong focus on **Modularity and Separation of Concerns**, **Robust Error Handling**, and **Modern Software Engineering Principles**, LLMService delivers a well-structured alternative to more monolithic frameworks like LangChain.
 
 > "LangChain isn't a library, it's a collection of demos held together by duct tape, fstrings, and prayers."
 
@@ -23,35 +23,35 @@ LLMService is a framework designed for building applications that leverage large
 2. **Generation Engine**: Orchestrates the generation process, including prompt crafting, invoking the LLM through llm handler, and post-processing.
 3. **Proteas**: A sophisticated prompt management system that loads and manages prompt templates from YAML files (`prompt.yaml`).
 4. **LLMService (Base Class)**: A base class that serves as a template for users to implement their custom service logic.  
-5. **App**: The application that consumes the services provided by LLMKit, receiving structured `generation_result` responses for further processing.
+5. **App**: The application that consumes the services provided by LLMService, receiving structured `generation_result` responses for further processing.
 
 ## Features
 
 ### Advanced Error Handling
 
-LLMKit incorporates sophisticated error handling mechanisms to ensure robust and reliable interactions with LLMs:
+LLMService incorporates sophisticated error handling mechanisms to ensure robust and reliable interactions with LLMs:
 
 - **Retry Mechanisms**: Utilizes the `tenacity` library to implement retries with exponential backoff for handling transient errors like rate limits or network issues.
 - **Custom Exception Handling**: Provides tailored responses to specific errors (e.g., insufficient quota), enabling graceful degradation and clearer insights into failure scenarios.
 
 ### Proteas: The Main Prompt Management System
 
-Proteas serves as LLMKit's core prompt management system, offering powerful tools for crafting, managing, and reusing prompts:
+Proteas serves as LLMService's core prompt management system, offering powerful tools for crafting, managing, and reusing prompts:
 
 - **Prompt Crafting**: Utilizes `PromptTemplate` to create consistent and dynamic prompts based on placeholders and data inputs.
 - **Unit Skeletons**: Supports loading and managing prompt templates from YAML files, promoting reusability and organization.
 
 ### BaseLLMService Class
 
-LLMKit provides an abstract `BaseLLMService` class to guide users in implementing their own service layers:
+LLMService provides an abstract `BaseLLMService` class to guide users in implementing their own service layers:
 
 - **Modern Software Development Practices**: Encourages adherence to best practices through a well-defined interface.
-- **Customization**: Allows developers to tailor the service layer to their specific application needs while leveraging the core functionalities provided by LLMKit.
+- **Customization**: Allows developers to tailor the service layer to their specific application needs while leveraging the core functionalities provided by LLMService.
 - **Extensibility**: Facilitates the addition of new features and integrations without modifying the core library.
 
 ## Installation
 
-Install LLMKit via pip:
+Install LLMService via pip:
 
 ```bash
 pip install llmservice
@@ -61,7 +61,7 @@ pip install llmservice
 
 ### Core Components
 
-LLMKit provides the following core modules:
+LLMService provides the following core modules:
 
 - **`llmhandler`**: Manages interactions with different LLM providers.
 - **`generation_engine`**: Handles the process of prompt crafting, LLM invocation, and post-processing.
