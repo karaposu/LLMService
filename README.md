@@ -4,6 +4,10 @@
     <img src="https://raw.githubusercontent.com/karaposu/llmkit/refs/heads/main/assets/logo_cropped.png" alt="logo" width="200"/>
 </div>
 
+<div style="text-align: center;">
+    <img src="https://raw.githubusercontent.com/karaposu/llmkit/refs/heads/main/assets/schemas.png" alt="logo" width="100"/>
+</div>
+
 LLMService is a framework designed for building applications that leverage large language models (LLMs). It aims to provide a text generation library that adheres to established software development best practices. With a strong focus on **Modularity and Separation of Concerns**, **Robust Error Handling**, and **Modern Software Engineering Principles**, LLMService delivers a well-structured alternative to more monolithic frameworks like LangChain.
 
 > "LangChain isn't a library, it's a collection of demos held together by duct tape, fstrings, and prayers."
