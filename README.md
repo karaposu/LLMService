@@ -17,7 +17,7 @@ LLMService is a framework designed for building applications that leverage large
 
 ### Architecture
 
-![LLMService Architecture](https://raw.githubusercontent.com/karaposu/llmkit/refs/heads/main/assets/llmservice_architecture.png)  <!-- Replace with your image link if hosting it publicly or in the README repository. -->
+![LLMService Architecture](https://raw.githubusercontent.com/karaposu/llmkit/refs/heads/main/assets/llmservice_architecture1.png)  <!-- Replace with your image link if hosting it publicly or in the README repository. -->
 
 1. **LLM Handler**: Manages interaction with different LLM providers (e.g., OpenAI, Ollama, Azure).
 2. **Generation Engine**: Orchestrates the generation process, including prompt crafting, invoking the LLM through llm handler, and post-processing.
