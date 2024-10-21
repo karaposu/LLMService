@@ -8,7 +8,7 @@ from collections import deque
 from typing import Optional, Union
 
 from llmservice.generation_engine import GenerationEngine, GenerationRequest, GenerationResult
-from llmservice.usage_stats import UsageStats
+from llmservice.schemas import UsageStats
 
 
 class BaseLLMService(ABC):

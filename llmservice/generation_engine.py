@@ -11,7 +11,7 @@ from proteas import Proteas  # Ensure this is installed and available
 from langchain_core.prompts import PromptTemplate
 from langchain_core.prompts.string import get_template_variables
 
-from .schemas import GenerationRequest, GenerationResult, PostprocessingResult , PipelineStepResult
+from .schemas import GenerationRequest, GenerationResult,  PipelineStepResult
 
 
 logger = logging.getLogger(__name__)
