@@ -42,16 +42,16 @@ class PipelineStepResult:
 @dataclass
 class GenerationResult:
     success: bool
-    meta: Dict[str, Any] = field(default_factory=dict)
+    request_id: Optional[Union[str, int]] = None
+    content: Optional[Any] = None
     raw_content: Optional[str] = None  # Store initial LLM output
-    content: Optional[Any] = None      # Final postprocessed content
+    operation_name: Optional[str] = None
+    meta: Dict[str, Any] = field(default_factory=dict)
     elapsed_time: Optional[float] = None
     error_message: Optional[str] = None
     model: Optional[str] = None
     formatted_prompt: Optional[str] = None
     unformatted_prompt: Optional[str] = None
-    operation_name: Optional[str] = None
-    request_id: Optional[Union[str, int]] = None
     response_type: Optional[str] = None
     how_many_retries_run: Optional[int] = None
     pipeline_steps_results: List[PipelineStepResult] = field(default_factory=list)

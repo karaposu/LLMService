@@ -21,6 +21,7 @@ class BaseLLMService(ABC):
         max_rpm: int = 60,
         max_concurrent_requests: int = 5,
         default_number_of_retries: int = 2,
+        show_logs=False
     ):
         """
         Base class for LLM services.
@@ -43,6 +44,7 @@ class BaseLLMService(ABC):
         self.semaphore = asyncio.Semaphore(self.max_concurrent_requests)
 
         self.default_number_of_retries=default_number_of_retries
+        self.show_logs=show_logs
 
         if yaml_file_path:
             self.load_prompts(yaml_file_path)
@@ -62,19 +64,27 @@ class BaseLLMService(ABC):
             self.usage_stats.update(generation_result.meta, operation_name)
             # Log the operation name and request ID
             request_id = generation_result.request_id
-            self.logger.info(
-                f"Operation: {operation_name}, Request ID: {request_id}, "
-                f"Input Tokens: {generation_result.meta.get('input_tokens', 0)}, "
-                f"Output Tokens: {generation_result.meta.get('output_tokens', 0)}, "
-                f"Total Cost: ${generation_result.meta.get('total_cost', 0):.5f}"
-            )
+
+            if  self.show_logs:
+                self.logger.info( f"Operation: {operation_name}, Request ID: {request_id} ")
+                self.logger.info( f"Input Tokens: {generation_result.meta.get('input_tokens', 0)}, Output Tokens: {generation_result.meta.get('output_tokens', 0)} ")
+                self.logger.info(f"Total Cost: ${generation_result.meta.get('total_cost', 0):.5f} ")
+
+
+            # self.logger.info(
+            #     f"Operation: {operation_name}, Request ID: {request_id}, "
+            #     f"Input Tokens: {generation_result.meta.get('input_tokens', 0)}, "
+            #     f"Output Tokens: {generation_result.meta.get('output_tokens', 0)}, "
+            #     f"Total Cost: ${ generation_result.meta.get('total_cost', 0):.5f }"
+            # )
             # Record the timestamp for RPM calculation
             self.request_timestamps.append(time.time())
 
             # Clean up old timestamps and log RPM
             self._clean_old_timestamps()
             rpm = self.get_current_rpm()
-            self.logger.info(f"Current RPM: {rpm:.2f}")
+            if self.show_logs:
+                self.logger.info(f"Current RPM: {rpm:.2f}")
 
     def _clean_old_timestamps(self):
         """Removes timestamps older than the RPM window."""
