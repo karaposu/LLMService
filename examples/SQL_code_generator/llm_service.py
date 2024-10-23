@@ -37,6 +37,7 @@ class MyLLMService(BaseLLMService):
         unformatted_prompt = self.generation_engine.craft_prompt(data_for_placeholders, order)
 
         # Define any postprocessing steps if needed
+
         pipeline_config = [
             {
                 'type': 'SemanticIsolation',   # uses LLMs to isolate specific part of the answer.

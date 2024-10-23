@@ -229,6 +229,7 @@ Provide the answer strictly in the following JSON format, do not combine anythin
             raise KeyError(f"Key '{key}' not found in content.")
         return content[key]
 
+    # todo add model param for semanticisolation
     def process_stringmatchvalidation(self, content: str, expected_string: str) -> str:
         """
         Validates that the expected string is present in the content.
