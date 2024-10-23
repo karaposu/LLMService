@@ -31,12 +31,6 @@ class MyLLMService(BaseLLMService):
         data_for_placeholders = {"user_nlp_query": user_question,
                                  "my_database_schema": database_desc}
 
-        print("-----------")
-
-        print(data_for_placeholders)
-
-        print( "-----------")
-
         order = ["my_database_schema", "user_nlp_query", "generate_sql_code"]
 
         # Craft the prompt using the generation engine
@@ -51,7 +45,7 @@ class MyLLMService(BaseLLMService):
                 }
             }
             # {
-            #     'type': 'ConvertToDict',  # uses string2dict package to convert output to a dict
+            #     'type': 'ConvertToDict',  # uses string2dict package to convert output to a dict. Handles edge cases.
             #     'params': {}
             # },
             # {
