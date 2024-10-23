@@ -45,19 +45,28 @@ class MyLLMService(BaseLLMService):
         # Define any postprocessing steps if needed
         pipeline_config = [
             {
-                'type': 'SemanticIsolation',
+                'type': 'SemanticIsolation',   # uses LLMs to isolate specific part of the answer.
                 'params': {
                     'semantic_element_for_extraction': 'SQL code'
                 }
             }
             # {
-            #     'type': 'ConvertToDict',
+            #     'type': 'ConvertToDict',  # uses string2dict package to convert output to a dict
             #     'params': {}
             # },
             # {
-            #     'type': 'ExtractValue',
-            #     'params': {'key': 'answer'}  # Extract the 'answer' key from the dictionary
+            #     'type': 'ExtractValue',       # if you asked for json output and you want to extract the data from the result dict
+            #     'params': {'key': 'answer'}
             # }
+            # {
+            #     'type': 'StringMatchValidation', # not implemented yet. But it can be useful for various scenarios.
+            #     'params': {'expected_string': 'answer'}
+            # }
+            # {
+            #     'type': 'JsonLoad',      # classic plain jsonload. We suggest ConvertToDict pipeline instead.
+            #     'params': {}
+            # }
+
         ]
         generation_request = GenerationRequest(
             data_for_placeholders=data_for_placeholders,
