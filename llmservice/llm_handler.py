@@ -13,7 +13,7 @@ import asyncio
 from langchain_openai import ChatOpenAI
 from langchain.chains import LLMChain
 from langchain_community.llms import Ollama
-from openai import RateLimitError
+from openai import RateLimitError , PermissionDeniedError
 
 #
 # LangChainDeprecationWarning: The class `Ollama` was deprecated in LangChain 0.3.1 and will be removed in
@@ -159,6 +159,18 @@ class LLMHandler:
 
             self.logger.error(f"HTTP error occurred: {e}")
             raise
+
+        except PermissionDeniedError as e:
+            success = False
+            error_message = str(e)
+            error_code = getattr(e, 'code', None)
+
+            if error_code == 'unsupported_country_region_territory':
+                self.logger.error("Country, region, or territory not supported.")
+                return "Country, region, or territory not supported.", success
+            else:
+                self.logger.error(f"PermissionDeniedError occurred: {error_message}")
+                raise
 
         except Exception as e:
             self.logger.error(f"An error occurred: {e}")
