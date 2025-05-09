@@ -10,11 +10,17 @@ def indent_text(text, indent):
 
 
 
+
+from dataclasses import dataclass, field
+from typing import Optional, Dict, Any, Union, Literal, List
+
 @dataclass
 class GenerationRequest:
-
-    data_for_placeholders: Dict[str, Any]
-    unformatted_prompt: str
+    # Provide either `formatted_prompt` OR both of `unformatted_prompt` and `data_for_placeholders`
+    formatted_prompt: Optional[str] = None
+    unformatted_prompt: Optional[str] = None
+    data_for_placeholders: Optional[Dict[str, Any]] = None
+    
     model: Optional[str] = None
     output_type: Literal["json", "str"] = "str"
     operation_name: Optional[str] = None
@@ -22,6 +28,41 @@ class GenerationRequest:
     number_of_retries: Optional[int] = None
     pipeline_config: List[Dict[str, Any]] = field(default_factory=list)
     fail_fallback_value: Optional[str] = None
+    
+    def __post_init__(self):
+        has_formatted    = self.formatted_prompt is not None
+        has_unformatted  = self.unformatted_prompt is not None
+        has_placeholders = self.data_for_placeholders is not None
+
+        # If a formatted_prompt is given, disallow the other two
+        if has_formatted and (has_unformatted or has_placeholders):
+            raise ValueError(
+                "Use either `formatted_prompt` by itself, "
+                "or both `unformatted_prompt` and `data_for_placeholders`, not both."
+            )
+        # If no formatted_prompt, require both unformatted_prompt and data_for_placeholders
+        if not has_formatted:
+            if not (has_unformatted and has_placeholders):
+                raise ValueError(
+                    "Either `formatted_prompt` must be set, "
+                    "or both `unformatted_prompt` and `data_for_placeholders` must be provided."
+                )
+
+
+
+# @dataclass
+# class GenerationRequest:
+    
+#     # formatted_prompt: Optional[str] = None
+#     data_for_placeholders: Dict[str, Any]
+#     unformatted_prompt: str
+#     model: Optional[str] = None
+#     output_type: Literal["json", "str"] = "str"
+#     operation_name: Optional[str] = None
+#     request_id: Optional[Union[str, int]] = None
+#     number_of_retries: Optional[int] = None
+#     pipeline_config: List[Dict[str, Any]] = field(default_factory=list)
+#     fail_fallback_value: Optional[str] = None
 
 
 

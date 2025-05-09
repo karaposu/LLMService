@@ -254,20 +254,41 @@ Provide the answer strictly in the following JSON format, do not combine anythin
             return json.loads(content)
         except json.JSONDecodeError as e:
             raise ValueError(f"JSON loading failed: {e}")
-
-    # Implement the generate method
-    def generate(self, unformatted_template, data_for_placeholders, model_name=None, request_id=None, operation_name=None) -> GenerationResult:
+        
+    
+    def generate(
+        self,
+        formatted_prompt: Optional[str] = None,
+        unformatted_template: Optional[str] = None,
+        data_for_placeholders: Optional[Dict[str, Any]] = None,
+        model_name: Optional[str] = None,
+        request_id: Optional[Union[str, int]] = None,
+        operation_name: Optional[str] = None
+    ) -> GenerationResult:
         """
         Generates content using the LLMHandler.
 
-        :param unformatted_template: The unformatted prompt template.
-        :param data_for_placeholders: Data to fill the placeholders.
+        :param formatted_prompt: A fully formatted prompt to send directly.
+        :param unformatted_template: The prompt template if formatting is needed.
+        :param data_for_placeholders: Values for template placeholders.
         :param model_name: Model name to use.
         :param request_id: Optional request ID.
         :param operation_name: Optional operation name.
         :return: GenerationResult object.
         """
-        meta = {
+        # Enforce either-or contract
+        has_formatted = formatted_prompt is not None
+        has_unformatted = unformatted_template is not None and data_for_placeholders is not None
+        if has_formatted and has_unformatted:
+            raise ValueError(
+                "Provide either `formatted_prompt` or (`unformatted_template` + `data_for_placeholders`), not both."
+            )
+        if not (has_formatted or has_unformatted):
+            raise ValueError(
+                "You must supply either `formatted_prompt` or both `unformatted_template` and `data_for_placeholders`."
+            )
+
+        meta = {  # usage & cost metadata
             "input_tokens": 0,
             "output_tokens": 0,
             "total_tokens": 0,
@@ -277,26 +298,24 @@ Provide the answer strictly in the following JSON format, do not combine anythin
             "total_cost": 0,
         }
 
-        t0 = time.time()
+        # Determine final prompt
+        if has_formatted:
+            prompt_to_send = formatted_prompt  # type: ignore
+        else:
+            existing_placeholders = get_template_variables(unformatted_template, "f-string")  # type: ignore
+            missing = set(existing_placeholders) - set(data_for_placeholders.keys())  # type: ignore
+            if missing:
+                raise ValueError(f"Missing data for placeholders: {missing}")
+            tmpl = PromptTemplate.from_template(unformatted_template)  # type: ignore
+            prompt_to_send = tmpl.format(**data_for_placeholders)  # type: ignore
 
-        # Validate placeholders
-        existing_placeholders = get_template_variables(unformatted_template, "f-string")
-        missing_placeholders = set(existing_placeholders) - set(data_for_placeholders.keys())
-
-        if missing_placeholders:
-            raise ValueError(f"Missing data for placeholders: {missing_placeholders}")
-
-        # Format the prompt
-        prompt_template = PromptTemplate.from_template(unformatted_template)
-        formatted_prompt = prompt_template.format(**data_for_placeholders)
-
+        # Invoke LLM
         t1 = time.time()
-
-        # Initialize LLMHandler with the model_name
         llm_handler = LLMHandler(model_name=model_name or self.llm_handler.model_name, logger=self.logger)
-
-        # Invoke the LLM synchronously
-        r, success = llm_handler.invoke(prompt=formatted_prompt)
+        r, success = llm_handler.invoke(prompt=prompt_to_send)
+        t2 = time.time()
+        elapsed = t2 - t1
+        meta["elapsed_time_for_invoke"] = elapsed
 
         if not success:
             return GenerationResult(
@@ -304,57 +323,169 @@ Provide the answer strictly in the following JSON format, do not combine anythin
                 meta=meta,
                 raw_content=None,
                 content=None,
-                elapsed_time=0,
+                elapsed_time=elapsed,
                 error_message="LLM invocation failed",
                 model=llm_handler.model_name,
-                formatted_prompt=formatted_prompt,
+                formatted_prompt=prompt_to_send,
+                unformatted_prompt=unformatted_template,
                 request_id=request_id,
                 operation_name=operation_name
             )
-
-        t2 = time.time()
-        elapsed_time_for_invoke = t2 - t1
-        meta["elapsed_time_for_invoke"] = elapsed_time_for_invoke
 
         if llm_handler.OPENAI_MODEL:
             try:
                 meta["input_tokens"] = r.usage_metadata["input_tokens"]
                 meta["output_tokens"] = r.usage_metadata["output_tokens"]
                 meta["total_tokens"] = r.usage_metadata["total_tokens"]
-            except KeyError as e:
+            except KeyError:
                 return GenerationResult(
                     success=False,
                     meta=meta,
                     raw_content=None,
                     content=None,
-                    elapsed_time=elapsed_time_for_invoke,
+                    elapsed_time=elapsed,
                     error_message="Token usage metadata missing",
                     model=llm_handler.model_name,
-                    formatted_prompt=formatted_prompt,
+                    formatted_prompt=prompt_to_send,
                     unformatted_prompt=unformatted_template,
                     request_id=request_id,
                     operation_name=operation_name
                 )
-
-            input_cost, output_cost = self.cost_calculator(
-                meta["input_tokens"], meta["output_tokens"], llm_handler.model_name)
-            meta["input_cost"] = input_cost
-            meta["output_cost"] = output_cost
-            meta["total_cost"] = input_cost + output_cost
+            in_cost, out_cost = self.cost_calculator(
+                meta["input_tokens"], meta["output_tokens"], llm_handler.model_name
+            )
+            meta["input_cost"] = in_cost
+            meta["output_cost"] = out_cost
+            meta["total_cost"] = in_cost + out_cost
 
         return GenerationResult(
             success=True,
             meta=meta,
-            raw_content=r.content,  # Assign initial LLM output
-            content=None,           # Will be assigned after postprocessing
-            elapsed_time=elapsed_time_for_invoke,
+            raw_content=r.content,
+            content=None,
+            elapsed_time=elapsed,
             error_message=None,
             model=llm_handler.model_name,
-            formatted_prompt=formatted_prompt,
+            formatted_prompt=prompt_to_send,
             unformatted_prompt=unformatted_template,
             request_id=request_id,
             operation_name=operation_name
         )
+
+    # # Implement the generate method
+    # def generate(
+    #     self,
+    #     formatted_prompt: Optional[str] = None,
+    #     unformatted_template: Optional[str] = None,
+    #     data_for_placeholders: Optional[Dict[str, Any]] = None,
+    #     model_name: Optional[str] = None,
+    #     request_id: Optional[Union[str, int]] = None,
+    #     operation_name: Optional[str] = None
+    # ) -> GenerationResult:
+    # #def generate(self, unformatted_template, data_for_placeholders, model_name=None, request_id=None, operation_name=None) -> GenerationResult:
+    #     """
+    #     Generates content using the LLMHandler.
+
+    #     :param unformatted_template: The unformatted prompt template.
+    #     :param data_for_placeholders: Data to fill the placeholders.
+    #     :param model_name: Model name to use.
+    #     :param request_id: Optional request ID.
+    #     :param operation_name: Optional operation name.
+    #     :return: GenerationResult object.
+    #     """
+    #     meta = {
+    #         "input_tokens": 0,
+    #         "output_tokens": 0,
+    #         "total_tokens": 0,
+    #         "elapsed_time_for_invoke": 0,
+    #         "input_cost": 0,
+    #         "output_cost": 0,
+    #         "total_cost": 0,
+    #     }
+
+    #     t0 = time.time()
+
+    #     if formatted_prompt is not None:
+    #         prompt_to_send = formatted_prompt
+    #     else:
+
+    
+    #         # Validate placeholders
+    #         existing_placeholders = get_template_variables(unformatted_template, "f-string")
+    #         missing_placeholders = set(existing_placeholders) - set(data_for_placeholders.keys())
+
+    #         if missing_placeholders:
+    #             raise ValueError(f"Missing data for placeholders: {missing_placeholders}")
+
+    #         # Format the prompt
+    #         prompt_template = PromptTemplate.from_template(unformatted_template)
+    #         prompt_to_send = prompt_template.format(**data_for_placeholders)
+
+    #     t1 = time.time()
+
+    #     # Initialize LLMHandler with the model_name
+    #     llm_handler = LLMHandler(model_name=model_name or self.llm_handler.model_name, logger=self.logger)
+
+    #     # Invoke the LLM synchronously
+    #     r, success = llm_handler.invoke(prompt=prompt_to_send)
+
+    #     if not success:
+    #         return GenerationResult(
+    #             success=False,
+    #             meta=meta,
+    #             raw_content=None,
+    #             content=None,
+    #             elapsed_time=0,
+    #             error_message="LLM invocation failed",
+    #             model=llm_handler.model_name,
+    #             formatted_prompt=prompt_to_send,
+    #             request_id=request_id,
+    #             operation_name=operation_name
+    #         )
+
+    #     t2 = time.time()
+    #     elapsed_time_for_invoke = t2 - t1
+    #     meta["elapsed_time_for_invoke"] = elapsed_time_for_invoke
+
+    #     if llm_handler.OPENAI_MODEL:
+    #         try:
+    #             meta["input_tokens"] = r.usage_metadata["input_tokens"]
+    #             meta["output_tokens"] = r.usage_metadata["output_tokens"]
+    #             meta["total_tokens"] = r.usage_metadata["total_tokens"]
+    #         except KeyError as e:
+    #             return GenerationResult(
+    #                 success=False,
+    #                 meta=meta,
+    #                 raw_content=None,
+    #                 content=None,
+    #                 elapsed_time=elapsed_time_for_invoke,
+    #                 error_message="Token usage metadata missing",
+    #                 model=llm_handler.model_name,
+    #                 formatted_prompt=prompt_to_send,
+    #                 unformatted_prompt=unformatted_template,
+    #                 request_id=request_id,
+    #                 operation_name=operation_name
+    #             )
+
+    #         input_cost, output_cost = self.cost_calculator(
+    #             meta["input_tokens"], meta["output_tokens"], llm_handler.model_name)
+    #         meta["input_cost"] = input_cost
+    #         meta["output_cost"] = output_cost
+    #         meta["total_cost"] = input_cost + output_cost
+
+    #     return GenerationResult(
+    #         success=True,
+    #         meta=meta,
+    #         raw_content=r.content,  # Assign initial LLM output
+    #         content=None,           # Will be assigned after postprocessing
+    #         elapsed_time=elapsed_time_for_invoke,
+    #         error_message=None,
+    #         model=llm_handler.model_name,
+    #         formatted_prompt=prompt_to_send,
+    #         unformatted_prompt=unformatted_template,
+    #         request_id=request_id,
+    #         operation_name=operation_name
+    #     )
 
 # Main function for testing
 def main():

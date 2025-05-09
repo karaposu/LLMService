@@ -53,7 +53,7 @@ class LLMHandler:
 
     def is_it_gpt_model(self, model_name):
         # return model_name in ["gpt-4o-mini", "gpt-4", "gpt-4o", "gpt-3.5"]
-        return model_name in ["gpt-4o-mini", "gpt-4", "gpt-4o", "gpt-3.5", "gpt-4o-2024-08-06", "chatgpt-4o-latest", "gpt-4o-mini-2024-07-18", "o1-mini", "o1-preview"]
+        return model_name in ["gpt-4o-mini", "gpt-4", "gpt-4o", "gpt-3.5", "gpt-4o-2024-08-06", "chatgpt-4o-latest", "gpt-4o-mini-2024-07-18", "o1-mini", "o1-preview", "gpt-4o-search-preview"]
 
 
     def change_model(self, model_name):
@@ -212,3 +212,22 @@ class LLMHandler:
         """
         current_attempt = retry_state.attempt_number
         return current_attempt >= self.max_retries
+    
+
+    # gpt-4o-search-preview
+
+
+def main():
+   
+    llm_handler=LLMHandler(model_name="gpt-4o-search-preview")
+    # llm_handler=LLMHandler(model_name="gpt-4o-mini")
+    sample_prompt= "web search yap ve bana bugun bursadaki hava durumunu ver"
+
+    r=llm_handler.invoke(sample_prompt)
+
+    print(r)
+
+
+
+if __name__ == "__main__":
+    main()
