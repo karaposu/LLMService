@@ -77,11 +77,23 @@ class LLMHandler:
     def _initialize_llm(self, model_name: str):
 
         if self.is_it_gpt_model(model_name):
+            if model_name== "gpt-4o-search-preview":
+             
+               return ChatOpenAI(api_key=os.getenv("OPENAI_API_KEY"),
+                                model_name=model_name,
+                                model_kwargs={
+                                    "web_search_options": {
+                                        "search_context_size": "high"
+                                    }
+                                }
 
-            return ChatOpenAI(api_key=os.getenv("OPENAI_API_KEY"),
-                              model_name=model_name,
-                              # max_tokens=15000
-                              )
+                                 
+                                )
+            else:
+                return ChatOpenAI(api_key=os.getenv("OPENAI_API_KEY"),
+                                model_name=model_name,
+                                # max_tokens=15000
+                                )
         elif model_name=="custom":
             ollama_llm=""
             return ollama_llm
