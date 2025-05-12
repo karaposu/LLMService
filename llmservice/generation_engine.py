@@ -16,18 +16,26 @@ from .schemas import GenerationRequest, GenerationResult,  PipelineStepResult
 
 logger = logging.getLogger(__name__)
 
-# Costs per model (example values, adjust as needed)
-gpt_models_input_cost = {'gpt-4o': 5 / 1000000,
-                         "gpt-4o-2024-08-06": 2.5 / 1000000,
-                         'gpt-4o-mini': 0.15 / 1000000,
-                         'o1-preview': 15 / 1000000,
-                         'o1-mini': 3 / 1000000}
 
-gpt_models_output_cost = {'gpt-4o': 15 / 1000000,
-                          "gpt-4o-2024-08-06":   10 / 1000000,
-                          'gpt-4o-mini': 0.6 / 1000000,
-                          'o1-preview': 60 / 1000000,
-                          'o1-mini': 12 / 1000000}
+
+gpt_models_cost = {
+    'gpt-4o-search-preview':    {'input_token_cost': 2.5e-6,  'output_token_cost': 10e-6},
+    'gpt-4o-mini-search-preview': {'input_token_cost': 2.5e-6,  'output_token_cost': 0.6e-6},
+    'gpt-4.5-preview':          {'input_token_cost': 75e-6,   'output_token_cost': 150e-6},
+    'gpt-4.1-nano':             {'input_token_cost': 0.1e-6,  'output_token_cost': 0.4e-6},
+    'gpt-4.1-mini':             {'input_token_cost': 0.4e-6,  'output_token_cost': 1.6e-6},
+    'gpt-4.1':                  {'input_token_cost': 2e-6,    'output_token_cost': 8e-6},
+    'gpt-4o':                   {'input_token_cost': 2.5e-6,  'output_token_cost': 10e-6},
+    'gpt-4o-audio-preview':     {'input_token_cost': 2.5e-6,  'output_token_cost': 10e-6},
+    'gpt-4o-mini':              {'input_token_cost': 0.15e-6, 'output_token_cost': 0.6e-6},
+    'o1':                       {'input_token_cost': 15e-6,   'output_token_cost': 60e-6},
+    'o1-pro':                   {'input_token_cost': 150e-6,  'output_token_cost': 600e-6},
+    'o3':                       {'input_token_cost': 10e-6,   'output_token_cost': 40e-6},
+    'o4-mini':                  {'input_token_cost': 1.1e-6,  'output_token_cost': 4.4e-6},
+}
+
+# Costs per model (example values, adjust as needed)
+
 
 
 class GenerationEngine:
@@ -76,16 +84,44 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         """
         unformatted_prompt = self.proteas.craft(units=order, placeholder_dict=placeholder_dict)
         return unformatted_prompt
-
+    
     def cost_calculator(self, input_token, output_token, model_name):
-        if model_name not in gpt_models_input_cost or model_name not in gpt_models_output_cost:
-            self.logger.error(f"Unsupported model name: {model_name}")
-            raise ValueError(f"Unsupported model name: {model_name}")
+        """
+        Calculate input/output costs based on the gpt_models_cost dict.
 
-        input_cost = gpt_models_input_cost[model_name] * int(input_token)
-        output_cost = gpt_models_output_cost[model_name] * int(output_token)
+        :param input_token: number of input tokens (int or numeric str)
+        :param output_token: number of output tokens (int or numeric str)
+        :param model_name: model key in gpt_models_cost
+        :return: (input_cost, output_cost)
+        """
+        # Ensure the model exists
+        info = gpt_models_cost.get(model_name)
+        if info is None:
+            self.logger.error(f"cost_calculator error: Unsupported model name: {model_name}")
+            raise ValueError(f"cost_calculator error: Unsupported model name: {model_name}")
+        
+        # Parse token counts
+        itoks = int(input_token)
+        otoks = int(output_token)
+
+        # Multiply by per-token rates
+        inp_rate = info['input_token_cost']
+        out_rate = info['output_token_cost']
+        input_cost  = inp_rate  * itoks
+        output_cost = out_rate * otoks
 
         return input_cost, output_cost
+
+    
+    # def cost_calculator(self, input_token, output_token, model_name):
+    #     if model_name not in gpt_models_input_cost or model_name not in gpt_models_output_cost:
+    #        self.logger.error(f"cost_calcator error: Unsupported model name: {model_name}")
+    #        raise ValueError(f"cost_calcator error: Unsupported model name: {model_name}")
+
+    #     input_cost = gpt_models_input_cost[model_name] * int(input_token)
+    #     output_cost = gpt_models_output_cost[model_name] * int(output_token)
+
+    #     return input_cost, output_cost
 
     def generate_output(self, generation_request: GenerationRequest) -> GenerationResult:
         """

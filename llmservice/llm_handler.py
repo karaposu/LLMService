@@ -1,5 +1,7 @@
 # here is llm_handler.py
 
+
+# to run python -m llmservice.llm_handler
 import os
 from pathlib import Path
 import logging
@@ -34,6 +36,27 @@ load_dotenv()
 openai_api_key = os.getenv("OPENAI_API_KEY")
 
 
+gpt_models_cost = {
+    'gpt-4o-search-preview':    {'input_token_cost': 2.5e-6,  'output_token_cost': 10e-6},
+    'gpt-4o-mini-search-preview': {'input_token_cost': 2.5e-6,  'output_token_cost': 0.6e-6},
+    'gpt-4.5-preview':          {'input_token_cost': 75e-6,   'output_token_cost': 150e-6},
+    'gpt-4.1-nano':             {'input_token_cost': 0.1e-6,  'output_token_cost': 0.4e-6},
+    'gpt-4.1-mini':             {'input_token_cost': 0.4e-6,  'output_token_cost': 1.6e-6},
+    'gpt-4.1':                  {'input_token_cost': 2e-6,    'output_token_cost': 8e-6},
+    'gpt-4o':                   {'input_token_cost': 2.5e-6,  'output_token_cost': 10e-6},
+    'gpt-4o-audio-preview':     {'input_token_cost': 2.5e-6,  'output_token_cost': 10e-6},
+    'gpt-4o-mini':              {'input_token_cost': 0.15e-6, 'output_token_cost': 0.6e-6},
+    'o1':                       {'input_token_cost': 15e-6,   'output_token_cost': 60e-6},
+    'o1-pro':                   {'input_token_cost': 150e-6,  'output_token_cost': 600e-6},
+    'o3':                       {'input_token_cost': 10e-6,   'output_token_cost': 40e-6},
+    'o4-mini':                  {'input_token_cost': 1.1e-6,  'output_token_cost': 4.4e-6},
+}
+
+
+gpt_model_list= list(gpt_models_cost.keys())
+
+
+
 class LLMHandler:
     def __init__(self, model_name: str, system_prompt=None, logger=None):
         self.llm = self._initialize_llm(model_name)
@@ -53,7 +76,7 @@ class LLMHandler:
 
     def is_it_gpt_model(self, model_name):
         # return model_name in ["gpt-4o-mini", "gpt-4", "gpt-4o", "gpt-3.5"]
-        return model_name in ["gpt-4o-mini", "gpt-4", "gpt-4o", "gpt-3.5", "gpt-4o-2024-08-06", "chatgpt-4o-latest", "gpt-4o-mini-2024-07-18", "o1-mini", "o1-preview", "gpt-4o-search-preview"]
+        return model_name in gpt_model_list
 
 
     def change_model(self, model_name):
@@ -78,7 +101,7 @@ class LLMHandler:
 
         if self.is_it_gpt_model(model_name):
             if model_name== "gpt-4o-search-preview":
-             
+               
                return ChatOpenAI(api_key=os.getenv("OPENAI_API_KEY"),
                                 model_name=model_name,
                                 model_kwargs={
