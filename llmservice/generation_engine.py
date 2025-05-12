@@ -133,9 +133,11 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         # Unpack the GenerationRequest
         placeholders = generation_request.data_for_placeholders
         unformatted_prompt = generation_request.unformatted_prompt
+        formatted_prompt = generation_request.formatted_prompt
 
         # Generate the output synchronously
         generation_result = self.generate(
+            formatted_prompt= formatted_prompt,
             unformatted_template=unformatted_prompt,
             data_for_placeholders=placeholders,
             model_name=generation_request.model,

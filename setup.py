@@ -6,9 +6,9 @@ import os
 setup(
     # name='LLM',  # Package name
     name='llmservice',  # Package name
-    version='0.1.8',  # Version of your package
+    version='0.1.9',  # Version of your package
     author='Enes Kuzucu',  # Your name
-
+    
     description='for creating fast and easy llm apps',  # Short description
     long_description=open('README.md').read(),  # Long description from a README file
     long_description_content_type='text/markdown',  # Type of the long description
