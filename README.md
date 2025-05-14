@@ -11,26 +11,56 @@
 
 -----------------
 
-## LLMService: add LLM logic in your app with complience of Modern Software Engineering Principles
+##  Add LLM logic in your app with complience of Modern Software Engineering Principles
 
 |             |                                                                                                                                                                                |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Package** | [![PyPI Latest Release](https://img.shields.io/pypi/v/llmservice.svg)](https://pypi.org/project/llmservice/) [![PyPI Downloads](https://img.shields.io/pypi/dm/llmservice.svg?label=PyPI%20downloads)](https://pypi.org/project/llmservice/) |
+
+## Installation
+
+Install LLMService via pip:
+
+```bash
+pip install llmservice
+```
  
 
+## What is it?
 
-LLMService is a framework designed for building applications that leverage large language models (LLMs). It aims to provide a text generation library that adheres to established software development best practices. With a strong focus on **Modularity and Separation of Concerns**, **Robust Error Handling**, and **Modern Software Engineering Principles**, LLMService delivers a well-structured alternative to more monolithic frameworks like LangChain.
+Integrating LLMs often means embedding prompt construction, API calls, and post-processing directly into your application code—creating tangled pipelines and maintenance headaches. llmservice was created to decouple and streamline LLM workflows—handling prompts, invocations, and post-processing in a clean, reusable layer.
 
-> "LangChain isn't a library, it's a collection of demos held together by duct tape, fstrings, and prayers."
+**LLMService** adheres to established software development best practices. With a strong focus on **Modularity and Separation of Concerns**, **Robust Error Handling**, and **Modern Software Engineering Principles**, LLMService delivers a well-structured alternative to more monolithic frameworks like LangChain.
 
-- Designed with 'Result Monad' design.  This way while we are minimazing the expose, user can implement their control mechanism for all key events via returned dataclass
-- Supports ratelimit aware async request. This is possible because of the usage of baseservice class logic. ALl llm generation logic is passing through one class enable us to keep track of ratelimits internally.  And this info is used to dynamically alter asnyc workers at any moment. 
-- Supports batch requests 
-- 
+> "LangChain isn't a library, it's a collection of demos held together by duct tape, fstrings, and prayers." 
 
 
+## Main Features
 
-### Architecture
+* **Result Monad Pattern**
+  Every invocation returns a `GenerationResult` dataclass, unifying success/failure handling, error metadata, and retry control in a single, consistent call.
+
+* **Customizable Post-Processing Pipelines**
+  Declaratively chain steps like semantic extraction, advanced JSON parsing, string validation, and more via simple pipeline configs.
+
+* **Rate-Limit-Aware Asynchronous Requests**
+  Centralized queuing with real-time rate-limit feedback drives dynamic worker scaling, maximising throughput while honouring API quotas.
+
+* **Transparent Cost & Usage Monitoring**
+  Automatic token counting and cost calculation per model, with detailed metadata returned alongside your content.
+
+* **Retry Mechanisms**
+  Utilizes the `tenacity` library to implement retries with exponential backoff for handling transient errors like rate limits or network issues.
+
+- **Custom Exception Handling**
+  Provides tailored responses to specific errors (e.g., insufficient quota), enabling graceful degradation and clearer insights into failure scenarios.
+
+
+
+
+
+
+## Architecture
 
 ![LLMService Architecture](https://raw.githubusercontent.com/karaposu/LLMService/refs/heads/main/assets/llmservice_architecture1.png) 
 
@@ -45,21 +75,6 @@ LLMService is a framework designed for building applications that leverage large
 4. **LLMService (Base Class)**: A base class that serves as a template for users to implement their custom service logic.  
 5. **App**: The application that consumes the services provided by LLMService, receiving structured `generation_result` responses for further processing.
 
-## Features
-
-### Advanced Error Handling
-
-LLMService incorporates sophisticated error handling mechanisms to ensure robust and reliable interactions with LLMs:
-
-- **Retry Mechanisms**: Utilizes the `tenacity` library to implement retries with exponential backoff for handling transient errors like rate limits or network issues.
-- **Custom Exception Handling**: Provides tailored responses to specific errors (e.g., insufficient quota), enabling graceful degradation and clearer insights into failure scenarios.
-
-### Proteas: The Main Prompt Management System
-
-Proteas serves as LLMService's core prompt management system, offering powerful tools for crafting, managing, and reusing prompts:
-
-- **Prompt Crafting**: Utilizes `PromptTemplate` to create consistent and dynamic prompts based on placeholders and data inputs.
-- **Unit Skeletons**: Supports loading and managing prompt templates from YAML files, promoting reusability and organization.
 
 ### BaseLLMService Class
 
@@ -68,6 +83,16 @@ LLMService provides an abstract `BaseLLMService` class to guide users in impleme
 - **Modern Software Development Practices**: Encourages adherence to best practices through a well-defined interface.
 - **Customization**: Allows developers to tailor the service layer to their specific application needs while leveraging the core functionalities provided by LLMService.
 - **Extensibility**: Facilitates the addition of new features and integrations without modifying the core library.
+
+
+
+### Proteas: The Main Prompt Management System
+
+Proteas serves as LLMService's (optional) prompt management system for mid level applications where there are losts of prompts to handle but not enough to put them in database, It offers powerful tools for crafting, managing, and reusing prompts:
+
+- **Prompt Crafting**: Utilizes `PromptTemplate` to create consistent and dynamic prompts based on placeholders and data inputs.
+- **Unit Skeletons**: Supports loading and managing prompt templates from YAML files, promoting reusability and organization.
+
 
 ## Installation
 
