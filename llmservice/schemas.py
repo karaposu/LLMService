@@ -4,6 +4,8 @@ from dataclasses import dataclass, field, fields
 from typing import Any, Dict, Optional, Union, Literal , List
 import pprint
 
+import json
+
 def indent_text(text, indent):
     indentation = ' ' * indent
     return '\n'.join(indentation + line for line in text.splitlines())
@@ -100,24 +102,65 @@ class GenerationResult:
     pipeline_steps_results: List[PipelineStepResult] = field(default_factory=list)
     generation_request: Optional[GenerationRequest] = None
 
+    def __str__(self) -> str:
+        lines = [
+            f"▶️ GenerationResult:",
+            f"   • Success: {self.success}",
+            f"   • Content: {self.content!r}",
+            f"   • Model: {self.model}",
+            (
+                f"   • Elapsed: {self.elapsed_time:.2f}s"
+                if self.elapsed_time is not None
+                else "   • Elapsed: N/A"
+            ),
+        ]
+
+        if self.meta:
+            meta_str = json.dumps(self.meta, indent=4)
+            lines.append("   • Meta:")
+            for ln in meta_str.splitlines():
+                lines.append("     " + ln)
+
+        if self.pipeline_steps_results:
+            lines.append("   • Pipeline Steps:")
+            for step in self.pipeline_steps_results:
+                status = "Success" if step.success else f"Failed ({step.error_message})"
+                lines.append(f"     - {step.step_type}: {status}")
+        
+        # The rest of the fields
+        lines.append(f"   • Request ID: {self.request_id}")
+        lines.append(f"   • Operation: {self.operation_name}")
+        if self.error_message:
+            lines.append(f"   • Error: {self.error_message}")
+        if self.raw_content and self.raw_content != self.content:
+            lines.append("   • Raw Content:")
+            lines.append(f"{self.raw_content!r}")
+        lines.append(f"   • Formatted Prompt: {self.formatted_prompt!r}")
+        lines.append(f"   • Unformatted Prompt: {self.unformatted_prompt!r}")
+        lines.append(f"   • Response Type: {self.response_type}")
+        lines.append(f"   • Retries: {self.how_many_retries_run}")
+        
+        return "\n".join(lines)
 
 
 
-    def __str__(self):
-        result = ["GenerationResult:"]
-        for field_info in fields(self):
-            field_name = field_info.name
-            value = getattr(self, field_name)
-            field_str = f"{field_name}:"
-            if isinstance(value, (dict, list)):
-                field_str += "\n" + indent_text(pprint.pformat(value, indent=4), 4)
-            elif isinstance(value, str) and '\n' in value:
-                # Multi-line string, indent each line
-                field_str += "\n" + indent_text(value, 4)
-            else:
-                field_str += f" {value}"
-            result.append(field_str)
-        return "\n\n".join(result)
+
+
+    # def __str__(self):
+    #     result = ["GenerationResult:"]
+    #     for field_info in fields(self):
+    #         field_name = field_info.name
+    #         value = getattr(self, field_name)
+    #         field_str = f"{field_name}:"
+    #         if isinstance(value, (dict, list)):
+    #             field_str += "\n" + indent_text(pprint.pformat(value, indent=4), 4)
+    #         elif isinstance(value, str) and '\n' in value:
+    #             # Multi-line string, indent each line
+    #             field_str += "\n" + indent_text(value, 4)
+    #         else:
+    #             field_str += f" {value}"
+    #         result.append(field_str)
+    #     return "\n\n".join(result)
 
 
 

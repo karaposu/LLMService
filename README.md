@@ -1,5 +1,20 @@
 # LLMService
 
+picture align="center">
+  <source media="(prefers-color-scheme: dark)" srcset="https://pandas.pydata.org/static/img/pandas_white.svg">
+  <img alt="Pandas Logo" src="https://raw.githubusercontent.com/karaposu/llmkit/refs/heads/main/assets/logo_cropped.png">
+</picture>
+
+-----------------
+
+# LLMService: add LLM logic in your app with complience of Modern Software Engineering Principles
+
+| | |
+| --- | --- |
+
+| Package | [![PyPI Latest Release](https://img.shields.io/pypi/v/pandas.svg)](https://pypi.org/project/pandas/) [![PyPI Downloads](https://img.shields.io/pypi/dm/llmservice.svg?label=PyPI%20downloads)](https://pypi.org/project/llmservice/) 
+
+
 <div style="text-align: center;">
     <img src="https://raw.githubusercontent.com/karaposu/llmkit/refs/heads/main/assets/logo_cropped.png" alt="logo" width="200"/>
 </div>
