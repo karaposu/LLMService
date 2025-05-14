@@ -1,11 +1,9 @@
-# LLMService
-
 <div align="center">
   <h1>LLMSERVICE</h1>
   <img
     alt="LLMSERVICE Logo"
     src="https://raw.githubusercontent.com/karaposu/llmkit/refs/heads/main/assets/logo_cropped.png"
-    width="200"
+    width="50"
   >
 </div>
 
@@ -13,17 +11,12 @@
 
 -----------------
 
-# LLMService: add LLM logic in your app with complience of Modern Software Engineering Principles
+## LLMService: add LLM logic in your app with complience of Modern Software Engineering Principles
 
 |             |                                                                                                                                                                                |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Package** | [![PyPI Latest Release](https://img.shields.io/pypi/v/llmservice.svg)](https://pypi.org/project/llmservice/) [![PyPI Downloads](https://img.shields.io/pypi/dm/llmservice.svg?label=PyPI%20downloads)](https://pypi.org/project/llmservice/) |
  
-
-
-<div style="text-align: center;">
-    <img src="https://raw.githubusercontent.com/karaposu/llmkit/refs/heads/main/assets/logo_cropped.png" alt="logo" width="200"/>
-</div>
 
 
 LLMService is a framework designed for building applications that leverage large language models (LLMs). It aims to provide a text generation library that adheres to established software development best practices. With a strong focus on **Modularity and Separation of Concerns**, **Robust Error Handling**, and **Modern Software Engineering Principles**, LLMService delivers a well-structured alternative to more monolithic frameworks like LangChain.
