@@ -28,7 +28,7 @@ pip install llmservice
 
 ## What is it?
 
-Integrating LLMs often means embedding prompt construction, API calls, and post-processing directly into your application code—creating tangled pipelines and maintenance headaches. llmservice was created to decouple and streamline LLM workflows—handling prompts, invocations, and post-processing in a clean, reusable layer.
+Integrating LLMs often means embedding prompt construction, API calls, and post-processing directly into your application code—creating tangled pipelines and maintenance headaches. llmservice was created to decouple and streamline LLM workflows—handling prompts, invocations, and post-processing in a clean, reusable layer 
 
 **LLMService** adheres to established software development best practices. With a strong focus on **Modularity and Separation of Concerns**, **Robust Error Handling**, and **Modern Software Engineering Principles**, LLMService delivers a well-structured alternative to more monolithic frameworks like LangChain.
 
