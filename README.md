@@ -70,10 +70,9 @@ LLMService delivers a well-structured alternative to more monolithic frameworks 
 
 ## Architecture
 
-![LLMService Architecture](https://raw.githubusercontent.com/karaposu/LLMService/refs/heads/main/assets/llmservice_architecture1.png) 
+![LLMService Architecture](https://raw.githubusercontent.com/karaposu/LLMService/refs/heads/main/assets/architecture.png) 
 
 ![schemas](https://raw.githubusercontent.com/karaposu/LLMService/refs/heads/main/assets/schemas.png)  
-
 
 
 
