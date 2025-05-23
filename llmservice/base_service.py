@@ -9,6 +9,7 @@ from typing import Optional, Union
 
 from llmservice.generation_engine import GenerationEngine, GenerationRequest, GenerationResult
 from llmservice.schemas import UsageStats
+from collections import deque
 
 
 class BaseLLMService(ABC):
@@ -46,10 +47,26 @@ class BaseLLMService(ABC):
         self.default_number_of_retries=default_number_of_retries
         self.show_logs=show_logs
 
+        self.token_timestamps = deque()        
+
         if yaml_file_path:
             self.load_prompts(yaml_file_path)
         else:
             self.logger.warning("No prompts YAML file provided.")
+
+    def _clean_old_token_timestamps(self):
+        now = time.time()
+        self.token_timestamps = deque(
+            (ts, tok) for ts, tok in self.token_timestamps
+            if now - ts <= self.rpm_window_seconds
+        )
+
+    def get_current_tpm(self) -> float:
+        """Sum of tokens in the last RPM window (i.e. TPM)."""
+        self._clean_old_token_timestamps()
+        total = sum(tokens for _, tokens in self.token_timestamps)
+        # scale if window ≠ 60 s
+        return total * (60 / self.rpm_window_seconds)
 
     def _generate_request_id(self) -> int:
         """Generates a unique request ID."""
@@ -78,7 +95,13 @@ class BaseLLMService(ABC):
             #     f"Total Cost: ${ generation_result.meta.get('total_cost', 0):.5f }"
             # )
             # Record the timestamp for RPM calculation
-            self.request_timestamps.append(time.time())
+            timestamp = time.time()
+            self.request_timestamps.append(timestamp)
+            
+            # track tokens-per-minute
+            total_tokens = generation_result.meta.get('total_tokens', 0)
+            self.token_timestamps.append((timestamp, total_tokens))
+            self._clean_old_token_timestamps()       
 
             # Clean up old timestamps and log RPM
             self._clean_old_timestamps()
@@ -87,10 +110,12 @@ class BaseLLMService(ABC):
                 self.logger.info(f"Current RPM: {rpm:.2f}")
 
     def _clean_old_timestamps(self):
-        """Removes timestamps older than the RPM window."""
-        current_time = time.time()
-        while self.request_timestamps and (current_time - self.request_timestamps[0] > self.rpm_window_seconds):
-            self.request_timestamps.popleft()
+        """Remove any timestamps older than the RPM window."""
+        now = time.time()
+        self.request_timestamps = deque(
+            ts for ts in self.request_timestamps
+            if now - ts <= self.rpm_window_seconds
+        )
 
     def get_current_rpm(self) -> float:
         """Calculates the current Requests Per Minute (RPM)."""
@@ -125,24 +150,35 @@ class BaseLLMService(ABC):
         generation_result.request_id = generation_request.request_id
         self._store_usage(generation_result)
         return generation_result
+    
+    async def _wait_if_rate_limited(self):
+        """Wait until RPM drops below the max_rpm threshold."""
+        while self.get_current_rpm() >= self.max_rpm:
+            # Time until the oldest timestamp exits the window
+            wait_time = self.rpm_window_seconds - (time.time() - self.request_timestamps[0])
+            wait_time = max(wait_time, 0)
+            self.logger.warning(f"Rate limit reached. Waiting {wait_time:.2f}s.")
+            await asyncio.sleep(wait_time)
+            self._clean_old_timestamps()
 
     async def execute_generation_async(
         self,
         generation_request: GenerationRequest,
         operation_name: Optional[str] = None
     ) -> GenerationResult:
-        """Asynchronously executes the generation and stores usage statistics."""
-        # Rate limiting check
-        await self._wait_if_rate_limited()
+        generation_request.operation_name = operation_name or generation_request.operation_name
+        generation_request.request_id = (
+            generation_request.request_id or self._generate_request_id()
+        )
+
+        # # ← This call ensures you don’t exceed max_rpm
+        # await self._wait_if_rate_limited()
 
         async with self.semaphore:
-            generation_request.operation_name = operation_name or generation_request.operation_name
-            generation_request.request_id = generation_request.request_id or self._generate_request_id()
-
             generation_result = await self.generation_engine.generate_output_async(generation_request)
-            generation_result.request_id = generation_request.request_id
             self._store_usage(generation_result)
             return generation_result
+
 
     def load_prompts(self, yaml_file_path: str):
         """Loads prompts from a YAML file."""

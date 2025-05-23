@@ -27,7 +27,7 @@ gpt_models_cost = {
     'gpt-4.1':                  {'input_token_cost': 2e-6,    'output_token_cost': 8e-6},
     'gpt-4o':                   {'input_token_cost': 2.5e-6,  'output_token_cost': 10e-6},
     'gpt-4o-audio-preview':     {'input_token_cost': 2.5e-6,  'output_token_cost': 10e-6},
-    'gpt-4o-mini':              {'input_token_cost': 0.15e-6, 'output_token_cost': 0.6e-6},
+    'gpt-4o-mini':              {'input_token_cost': 0.15e-6, 'output_token_cost': 0.6e-6, },
     'o1':                       {'input_token_cost': 15e-6,   'output_token_cost': 60e-6},
     'o1-pro':                   {'input_token_cost': 150e-6,  'output_token_cost': 600e-6},
     'o3':                       {'input_token_cost': 10e-6,   'output_token_cost': 40e-6},
@@ -111,17 +111,131 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         output_cost = out_rate * otoks
 
         return input_cost, output_cost
-
     
-    # def cost_calculator(self, input_token, output_token, model_name):
-    #     if model_name not in gpt_models_input_cost or model_name not in gpt_models_output_cost:
-    #        self.logger.error(f"cost_calcator error: Unsupported model name: {model_name}")
-    #        raise ValueError(f"cost_calcator error: Unsupported model name: {model_name}")
+    async def generate_output_async(
+        self,
+        generation_request: GenerationRequest
+    ) -> GenerationResult:
+        """
+        Asynchronously generates the output and processes post‐processing,
+        mirroring the logic of generate_output but using LLMHandler.invoke_async.
+        """
+        # Unpack request
+        placeholders        = generation_request.data_for_placeholders
+        unformatted_prompt  = generation_request.unformatted_prompt
+        formatted_prompt    = generation_request.formatted_prompt
+        model_name          = generation_request.model or self.llm_handler.model_name
+        operation_name      = generation_request.operation_name
 
-    #     input_cost = gpt_models_input_cost[model_name] * int(input_token)
-    #     output_cost = gpt_models_output_cost[model_name] * int(output_token)
+        # Prepare formatted prompt
+        if formatted_prompt:
+            prompt_to_send = formatted_prompt
+        else:
+            # Validate placeholders
+            existing = get_template_variables(unformatted_prompt, "f-string")
+            missing  = set(existing) - set(placeholders or {})
+            if missing:
+                raise ValueError(f"Missing placeholders for async prompt: {missing}")
+            tmpl = PromptTemplate.from_template(unformatted_prompt)
+            prompt_to_send = tmpl.format(**placeholders)  # type: ignore
 
-    #     return input_cost, output_cost
+        # Initialize metadata
+        meta = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "elapsed_time_for_invoke": 0,
+            "input_cost": 0.0,
+            "output_cost": 0.0,
+            "total_cost": 0.0,
+        }
+
+        # Invoke LLM asynchronously
+        t1 = time.time()
+        try:
+            r, success = await self.llm_handler.invoke_async(prompt=prompt_to_send)
+        except Exception as e:
+            return GenerationResult(
+                success=False,
+                meta=meta,
+                raw_content=None,
+                content=None,
+                elapsed_time=time.time() - t1,
+                error_message=str(e),
+                model=model_name,
+                formatted_prompt=prompt_to_send,
+                unformatted_prompt=unformatted_prompt,
+                request_id=generation_request.request_id,
+                operation_name=operation_name,
+            )
+        t2 = time.time()
+        meta["elapsed_time_for_invoke"] = t2 - t1
+
+        if not success:
+            return GenerationResult(
+                success=False,
+                meta=meta,
+                raw_content=None,
+                content=None,
+                elapsed_time=meta["elapsed_time_for_invoke"],
+                error_message="LLM invocation failed",
+                model=model_name,
+                formatted_prompt=prompt_to_send,
+                unformatted_prompt=unformatted_prompt,
+                request_id=generation_request.request_id,
+                operation_name=operation_name,
+            )
+
+        # Populate token usage and cost if OpenAI model
+        if self.llm_handler.OPENAI_MODEL:
+            try:
+                meta["input_tokens"]  = r.usage_metadata["input_tokens"]
+                meta["output_tokens"] = r.usage_metadata["output_tokens"]
+                meta["total_tokens"]  = r.usage_metadata["total_tokens"]
+            except KeyError:
+                return GenerationResult(
+                    success=False,
+                    meta=meta,
+                    raw_content=None,
+                    content=None,
+                    elapsed_time=meta["elapsed_time_for_invoke"],
+                    error_message="Token usage metadata missing",
+                    model=model_name,
+                    formatted_prompt=prompt_to_send,
+                    unformatted_prompt=unformatted_prompt,
+                    request_id=generation_request.request_id,
+                    operation_name=operation_name,
+                )
+            inp_cost, out_cost = self.cost_calculator(
+                meta["input_tokens"], meta["output_tokens"], model_name
+            )
+            meta["input_cost"]  = inp_cost
+            meta["output_cost"] = out_cost
+            meta["total_cost"]  = inp_cost + out_cost
+
+        # Build initial GenerationResult
+        generation_result = GenerationResult(
+            success=True,
+            meta=meta,
+            raw_content=r.content,
+            content=None,
+            elapsed_time=meta["elapsed_time_for_invoke"],
+            error_message=None,
+            model=model_name,
+            formatted_prompt=prompt_to_send,
+            unformatted_prompt=unformatted_prompt,
+            request_id=generation_request.request_id,
+            operation_name=operation_name,
+        )
+
+        # Apply post-processing pipeline if configured
+        if generation_request.pipeline_config:
+            return self.execute_pipeline(generation_result, generation_request.pipeline_config)
+        else:
+            generation_result.content = generation_result.raw_content
+            return generation_result
+
+ 
 
     def generate_output(self, generation_request: GenerationRequest) -> GenerationResult:
         """

@@ -7,7 +7,7 @@ from pathlib import Path
 import logging
 from dotenv import load_dotenv
 from tenacity import retry, stop_after_attempt, wait_random_exponential, retry_if_exception_type, RetryCallState, AsyncRetrying
-
+from typing import Any
 import httpx
 import asyncio
 
@@ -211,6 +211,51 @@ class LLMHandler:
             self.logger.error(f"An error occurred: {e}")
             raise
 
+    
+    @retry(
+        retry=retry_if_exception_type((httpx.HTTPStatusError, RateLimitError)),
+        stop=stop_after_attempt(2),
+        wait=wait_random_exponential(min=1, max=60)
+    )
+    async def invoke_async(
+        self,
+        prompt: str,
+        retry_state: RetryCallState = None
+    ) -> tuple[Any, bool]:
+        """
+        Uses the LLM’s native async call (ainvoke). Raises if ainvoke isn’t implemented.
+        """
+        if not hasattr(self.llm, "ainvoke"):
+            raise NotImplementedError(
+                f"{type(self.llm).__name__} does not support async `ainvoke`."
+            )
+
+        try:
+            # Call the async API directly
+            response = await self.llm.ainvoke(prompt)
+            success = True
+            return response, success
+
+        except RateLimitError as e:
+            # propagate up to retry decorator
+            raise
+
+        except httpx.HTTPStatusError as e:
+            # propagate up to retry decorator
+            raise
+
+        except PermissionDeniedError as e:
+            # handle and wrap permission errors
+            code = getattr(e, "code", None)
+            if code == "unsupported_country_region_territory":
+                return "Country, region, or territory not supported.", False
+            raise
+
+        except Exception as e:
+            # any other errors bubble up
+            self.logger.error(f"Async invoke error: {e}")
+            raise
+
     # async def invoke_async(self, prompt: str):
     #     try:
     #         if self.system_prompt:
@@ -222,24 +267,26 @@ class LLMHandler:
     #     except Exception as e:
     #         self.logger.error(f"An error occurred: {e}")
     #         return str(e), False
-    async def invoke_async(self, prompt: str):
-        async for attempt in AsyncRetrying(
-                retry=retry_if_exception_type((httpx.HTTPStatusError, RateLimitError)),
-                stop=stop_after_attempt(2),
-                wait=wait_random_exponential(min=1, max=60)
-        ):
-            with attempt:
-                try:
-                    if self.system_prompt:
-                        response = await self.llm.acall(prompt=prompt, context=self.system_prompt)
-                    else:
-                        response = await self.llm.acall(prompt)
-                    success = True
-                    return response, success
-                except Exception as e:
-                    self.logger.error(f"An error occurred: {e}")
-                    raise
 
+
+    # async def invoke_async(self, prompt: str):
+    #     async for attempt in AsyncRetrying(
+    #             retry=retry_if_exception_type((httpx.HTTPStatusError, RateLimitError)),
+    #             stop=stop_after_attempt(2),
+    #             wait=wait_random_exponential(min=1, max=60)
+    #     ):
+    #         with attempt:
+    #             try:
+    #                 if self.system_prompt:
+    #                     response = await self.llm.acall(prompt=prompt, context=self.system_prompt)
+    #                 else:
+    #                     response = await self.llm.acall(prompt)
+    #                 success = True
+    #                 return response, success
+    #             except Exception as e:
+    #                 self.logger.error(f"An error occurred: {e}")
+    #                 raise
+    
     def _retry_count_is_max(self, retry_state: RetryCallState) -> bool:
         """
         Helper function to check if the retry limit is reached.
