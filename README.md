@@ -10,7 +10,7 @@
 
 -----------------
 
-##  Add LLM logic in your app with complience of Modern Software Engineering Principles
+##  llmservice was created to decouple and streamline LLM workflows—handling prompts, invocations, and post-processing in a clean, reusable layer
 
 |             |                                                                                                                                                                                |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -25,11 +25,20 @@ pip install llmservice
 ```
  
 
-## What is it?
+## What makes it unique?
 
-Integrating LLMs often means embedding prompt construction, API calls, and post-processing directly into your application code—creating tangled pipelines and maintenance headaches. llmservice was created to decouple and streamline LLM workflows—handling prompts, invocations, and post-processing in a clean, reusable layer 
+| Feature                             | LLMService                                                                                                                                | LangChain                                                                                                          |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| **Result Handling**                 | Returns a single `GenerationResult` dataclass encapsulating success/failure, rich metadata (tokens, cost, latency), and pipeline outcomes | Composes chains of tools and agents; success/failure handling is dispersed via callbacks and exceptions            |
+| **Rate-Limit & Throughput Control** | Built-in sliding-window RPM/TPM counters and an adjustable semaphore for concurrency, automatically pausing when you hit your API quota   | Relies on external throttlers or underlying client logic; no native RPM/TPM management                             |
+| **Cost Monitoring**                 | Automatic per-model token-level cost calculation and aggregated usage stats for real-time billing insights                                | No built-in cost monitoring—you must implement your own wrappers or middleware                                     |
+| **Post-Processing Pipelines**       | Declarative configs for JSON parsing, semantic extraction, validation, and transformation without ad-hoc parsing code                     | Encourages embedding output parsers inside chains or writing ad-hoc post-chain functions, scattering parsing logic |
+| **Dependencies**                    | Minimal footprint: only Tenacity, your LLM client, and optionally YAML for prompts                                                        | Broad ecosystem: agents, retrievers, vector stores, callback managers, and other heavy dependencies                |
+| **Extensibility**                   | Provides a clear `BaseLLMService` subclassing interface so you encapsulate each business operation and never call the engine directly     | You wire together chains or agents at call-site, mixing business logic with prompt orchestration                   |
 
-**LLMService** adheres to established software development best practices. With a strong focus on **Modularity and Separation of Concerns**, **Robust Error Handling**, and **Modern Software Engineering Principles**, LLMService delivers a well-structured alternative to more monolithic frameworks like LangChain.
+
+
+LLMService delivers a well-structured alternative to more monolithic frameworks like LangChain.
 
 > "LangChain isn't a library, it's a collection of demos held together by duct tape, fstrings, and prayers." 
 
