@@ -1,11 +1,6 @@
-<div align="center">
-  <h1>LLMSERVICE</h1>
-  <img
-    alt="LLMSERVICE Logo"
-    src="https://raw.githubusercontent.com/karaposu/llmkit/refs/heads/main/assets/logo_cropped.png"
-    width="50"
-  >
-</div>
+
+
+![LLMSERVICE Logo](https://raw.githubusercontent.com/karaposu/llmkit/refs/heads/main/assets/text_logo_transp.png)
 
 
 -----------------
