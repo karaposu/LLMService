@@ -101,7 +101,11 @@ class GenerationResult:
     how_many_retries_run: Optional[int] = None
     pipeline_steps_results: List[PipelineStepResult] = field(default_factory=list)
     generation_request: Optional[GenerationRequest] = None
-
+    rpm_at_the_beginning: Optional[int] = None
+    rpm_at_the_end: Optional[int] = None
+    tpm_at_the_beginning: Optional[int] = None
+    tpm_at_the_end: Optional[int] = None
+    
     def __str__(self) -> str:
         lines = [
             f"▶️ GenerationResult:",

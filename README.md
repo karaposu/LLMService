@@ -5,7 +5,7 @@
 
 -----------------
 
-##  llmservice was created to decouple and streamline LLM workflows—handling prompts, invocations, and post-processing in a clean, reusable layer
+A clean, production-ready service layer that centralizes prompts, invocations, and post-processing, ensuring rate-aware, maintainable, and scalable LLM logic in your application.
 
 |             |                                                                                                                                                                                |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -40,61 +40,38 @@ LLMService delivers a well-structured alternative to more monolithic frameworks 
 
 ## Main Features
 
-* **Result Monad Pattern**
-  Every invocation returns a `GenerationResult` dataclass, unifying success/failure handling, error metadata, and retry control in a single, consistent call.
+* **Minimal Footprint & Low Coupling**  
+  Designed for dependency injection—your application code never needs to know about LLM logic.
 
-* **Customizable Post-Processing Pipelines**
-  Declaratively chain steps like semantic extraction, advanced JSON parsing, string validation, and more via simple pipeline configs.
+* **Result Monad Pattern**  
+  Returns a `GenerationResult` dataclass for every invocation, encapsulating success/failure status, raw and processed outputs, error details, retry information, and per-step results—giving you full control over custom workflows.
 
-* **Rate-Limit-Aware Asynchronous Requests**
-  Centralized queuing with real-time rate-limit feedback drives dynamic worker scaling, maximising throughput while honouring API quotas.
+* **Declarative Post-Processing Pipelines**  
+  Chain semantic extraction, JSON parsing, string validation, and more via simple, declarative configurations.
 
-* **Transparent Cost & Usage Monitoring**
-  Automatic token counting and cost calculation per model, with detailed metadata returned alongside your content.
+* **Rate-Limit-Aware Asynchronous Requests**  
+  Dynamically queue and scale workers based on real-time RPM/TPM metrics to maximize throughput without exceeding API quotas.
 
-* **Retry Mechanisms**
-  Utilizes the `tenacity` library to implement retries with exponential backoff for handling transient errors like rate limits or network issues.
+* **Transparent Cost & Usage Monitoring**  
+  Automatically track input/output tokens and compute per-model cost, exposing detailed metadata with each response.
 
-- **Custom Exception Handling**
-  Provides tailored responses to specific errors (e.g., insufficient quota), enabling graceful degradation and clearer insights into failure scenarios.
+* **Automated Retry & Exponential Backoff**  
+  Handle transient errors (rate limits, network hiccups) with configurable retries and exponential backoff powered by Tenacity.
 
-
-
+* **Custom Exception Handling**  
+  Provide clear, operation-specific fallbacks (e.g., insufficient quota, unsupported region) for graceful degradation.
 
 
 
 ## Architecture
 
+LLMService provides an abstract `BaseLLMService` class to guide users in implementing their own service layers. It includes `llmhandler`which manages interactions with different LLM providers and `generation_engine` which handles the process of prompt crafting, LLM invocation, and post-processing
+
 ![LLMService Architecture](https://raw.githubusercontent.com/karaposu/LLMService/refs/heads/main/assets/architecture.png) 
 
 ![schemas](https://raw.githubusercontent.com/karaposu/LLMService/refs/heads/main/assets/schemas.png)  
 
-
-
-1. **LLM Handler**: Manages interaction with different LLM providers (e.g., OpenAI, Ollama, Azure).
-2. **Generation Engine**: Orchestrates the generation process, including prompt crafting, invoking the LLM through llm handler, and post-processing.
-3. **Proteas**: A sophisticated prompt management system that loads and manages prompt templates from YAML files (`prompt.yaml`).
-4. **LLMService (Base Class)**: A base class that serves as a template for users to implement their custom service logic.  
-5. **App**: The application that consumes the services provided by LLMService, receiving structured `generation_result` responses for further processing.
-
-
-### BaseLLMService Class
-
-LLMService provides an abstract `BaseLLMService` class to guide users in implementing their own service layers:
-
-- **Modern Software Development Practices**: Encourages adherence to best practices through a well-defined interface.
-- **Customization**: Allows developers to tailor the service layer to their specific application needs while leveraging the core functionalities provided by LLMService.
-- **Extensibility**: Facilitates the addition of new features and integrations without modifying the core library.
-
-
-
-### Proteas: The Main Prompt Management System
-
-Proteas serves as LLMService's (optional) prompt management system for mid level applications where there are losts of prompts to handle but not enough to put them in database, It offers powerful tools for crafting, managing, and reusing prompts:
-
-- **Prompt Crafting**: Utilizes `PromptTemplate` to create consistent and dynamic prompts based on placeholders and data inputs.
-- **Unit Skeletons**: Supports loading and managing prompt templates from YAML files, promoting reusability and organization.
-
+# Usage 
 
 ## Installation
 
@@ -104,81 +81,26 @@ Install LLMService via pip:
 pip install llmservice
 ```
 
-## Quick Start
+## Step 1: Subclassing `BaseLLMService` and create methods
 
-### Core Components
+Create a new Python file (e.g., `my_llm_service.py`) and extend the `BaseLLMService` class. And all llm using logic of your business logic will be defined here as methods. 
 
-LLMService provides the following core modules:
-
-- **`llmhandler`**: Manages interactions with different LLM providers.
-- **`generation_engine`**: Handles the process of prompt crafting, LLM invocation, and post-processing.
-- **`base_service`**: Provides an abstract class that serves as a blueprint for building custom services.
-
-### Creating a Custom LLMService
-
-To create your own service layer, follow these steps:
-
-#### Step 0: Create your prompts.yaml file
-Proteas uses a yaml file to load and manage your prompts. Prompts are encouraged to store as prompt template units 
-where component of a prompt is decomposed into prompt template units and store in such way. To read more go to proteas docs
-(link here)
-
-Create a new Python file (e.g., `prompts.yaml`) 
-
-add these lines 
-
-```commandline
-main:
-
-
-  - name: "input_paragraph"
-    statement_suffix: "Here is"
-    question_suffix: "What is "
-    placeholder_proclamation: input text to be translated
-    placeholder: "input_paragraph"
-
-
-  - name: "translate_to_russian"
-    info: > 
-      take above text and translate it to russian with a scientific language, Do not output any additiaonal text.
-   
-```
-
-#### Step 1: Subclass `BaseLLMService`
-
-Create a new Python file (e.g., `my_llm_service.py`) and extend the `BaseLLMService` class.
-In your app all llm generation data flow will go through this class.  This is a good way of not coupling rest of your
-app logic with LLM relevant logics. 
-
-You simply arange the names of your prompt template units in a list and pass this to generation engine.
 
 ```python
-from llmservice.base_service import BaseLLMService
-from llmservice.generation_engine import GenerationEngine
-import logging
+ def translate_to_latin(self, input_paragraph: str) -> GenerationResult:
+        my_prompt=f"translate this text to latin {input_paragraph}"
 
-
-class MyLLMService(BaseLLMService):
-    def __init__(self, logger=None):
-        self.logger = logger or logging.getLogger(__name__)
-        self.generation_engine = GenerationEngine(logger=self.logger, model_name="gpt-4o-mini")
-
-    def translate_to_russian(self, input_paragraph: str):
-        data_for_placeholders = {'input_paragraph': input_paragraph}
-        order = ["input_paragraph", "translate_to_russian"]
-
-        unformatted_prompt = self.generation_engine.craft_prompt(data_for_placeholders, order)
-
-        generation_result = self.generation_engine.generate_output(
-            unformatted_prompt,
-            data_for_placeholders,
-            response_type="string"
+        generation_request = GenerationRequest(
+            formatted_prompt=my_prompt,
+            model="gpt-4o",  # Use the model specified in __init__
         )
 
-        return generation_result.content
+        # Execute the generation synchronously
+        generation_result = self.execute_generation(generation_request)
+        return generation_result
 ```
 
-#### Step 2: Use the Custom Service
+## Step 2: Import your llm layer and use the methods 
 
 ```python
 # app.py
@@ -186,11 +108,163 @@ from my_llm_service import MyLLMService
 
 if __name__ == '__main__':
     service = MyLLMService()
-    result = service.translate_to_russian("Hello, how are you?")
+    result = service.translate_to_latin("Hello, how are you?")
     print(result)
+    
+    # in this case the result will be a generation_result object which inludes all the information you need. 
 ```
 
-Result will be a generation_result object which inludes all the information you need. 
+## Step 3: Life is about joyment. Do not miss life. 
+
+
+# Postprocessing Pipeline  
+There are 5 custom methods integrated into LLMservice. These postprocessing methods are the most commonly used methods so 
+we are supporting them natively. 
+
+## Method 1: SemanticIsolator
+
+When you want isolate specific semantics (code piece, name, ) from LLM output you can use SemanticIsolater. 
+
+for example: 
+
+lets have such code 
+
+```
+
+from non_exitent_module import run_sql_code_directly
+def main():
+    service = MyLLMService()
+
+    my_db_desc= """ I have a database table with the following schema:
+           Table: bills
+           - bill_id (INT, Primary Key)
+           - bill_date (DATE)
+           - total (DECIMAL) """
+
+    user_question= " retrieve the total spendings for each month in the year 2023, grouped by month and ordered chronologically."
+
+    result = service.create_sql_code(user_question=user_question, database_desc=my_db_desc)
+    
+    data_from_db=run_sql_code_directly(result.content)
+
+```
+As you see we get the LLM output (result.content) directly and use that in another function which runs it as SQL code. 
+But what if LLM output includes non-SQL string like "here is your answer: " or "do you need something else?" ?
+
+This is where SemanticIsolator is helpful. You tell it which semantic element it should isolate and it runs a second LLM query to extract that element only.
+
+So for above example we can create my_llm_service method like this:
+
+
+```
+class MyLLMService(BaseLLMService):
+    
+    def create_sql_code(self, user_question: str,  database_desc,) -> GenerationResult:
+    
+        formatted_prompt = f"""Here is my database description: {database_desc},
+                            and here is what the user wants to learn: {user_question}.
+                            I want you to generate a SQL query. answer should contain only SQL code."""
+
+        pipeline_config = [
+            {
+                'type': 'SemanticIsolation',   # uses LLM to isolate specific part of the answer.
+                'params': {
+                    'semantic_element_for_extraction': 'SQL code'
+                }
+            }
+        ]
+        
+        generation_request = GenerationRequest(
+            formatted_prompt=formatted_prompt,
+            model="gpt-4o", 
+            pipeline_config=pipeline_config,
+        )
+
+        generation_result = self.execute_generation(generation_request)
+        return generation_result
+
+```
+
+
+## Method 2: ConvertToDict
+
+When you ask LLM to output json like response. You also want to convert the response into a dict (usually using json.load() ) but there are many cases where output is missing quotes and jsonload will fail.  ConvertToDict uses module called 
+string2dict which handles all edge cases and even there are missing quotes it can understand and convert the string into a dictionary.
+ below are some LLM outputs where json.load fails but ConvertToDict can convert
+
+
+```
+ sample_1 
+
+  '{\n    "key": "SELECT DATE_FORMAT(bills.bill_date, \'%Y-%m\') AS month, SUM(bills.total) AS total_spending FROM bills WHERE YEAR(bills.bill_date) = 2023 GROUP BY DATE_FORMAT(bills.bill_date, \'%Y-%m\') ORDER BY month;"\n}'
+
+ sample_2 
+
+  "{\n    'key': 'SELECT DATE_FORMAT(bill_date, \\'%Y-%m\\') AS month, SUM(total) AS total_spendings FROM bills WHERE YEAR(bill_date) = 2023 GROUP BY month ORDER BY month;'\n}"
+ 
+ sample_3
+
+  '{   \'key\': "https://dfasdfasfer.vercel.app/"}'
+   
+```
+
+
+## Method 3: ExtractValue
+
+Useful when you asked LLM for json output with field {"answer" : __here_is_LLM answer.__ } and you want to extract the data from the result dict using a key. This pipeline step allows you to automatically extract the value from this dictionary. 
+
+            {
+            #     'type': 'ExtractValue',       # if you asked for json output and you want to extract the data from the result dict
+            #     'params': {'key': 'answer'}
+            # }
+
+
+## Using Pipeline Methods together
+It is common scenario. You can pipe these methods together like this
+
+      - semanticisolator can extract json part
+      - ConvertToDict can convert json into a dict 
+      - ExtractValue can help you take only value part of the dictonary
+
+Here how it looks in code:
+
+```
+pipeline_config = [
+            {
+                'type': 'SemanticIsolation',   # uses LLMs to isolate specific part of the answer.
+                'params': {
+                    'semantic_element_for_extraction': 'SQL code'
+                }
+            }
+           , 
+           {
+               'type': 'ConvertToDict',  # uses string2dict package to convert output to a dict. Handles edge cases.
+                 'params': {}
+             },
+            {
+                'type': 'ExtractValue',       # if you asked for json output and you want to extract the data from the result dict
+               'params': {'key': 'answer'}
+            }
+          ]
+
+```
+
+## Async support 
+LLMservice supports async methods. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

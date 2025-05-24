@@ -1,11 +1,6 @@
 # my_llm_service.py
 
-import asyncio
-from llmservice.base_service import BaseLLMService
-from llmservice.schemas import GenerationRequest, GenerationResult
-from typing import Optional, Union
-import os
-
+from llmservice import BaseLLMService, GenerationRequest, GenerationResult
 
 class MyLLMService(BaseLLMService):
     
@@ -17,12 +12,9 @@ class MyLLMService(BaseLLMService):
             formatted_prompt=prompt,
             model="gpt-4o",  
         )
-
-        # Execute the generation synchronously
         generation_result = self.execute_generation(generation_request)
         return generation_result
     
-
     
     def bring_only_capital(self,user_input: str,) -> GenerationResult:
 

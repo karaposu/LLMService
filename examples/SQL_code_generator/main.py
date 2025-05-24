@@ -1,13 +1,10 @@
-# main.py
 
 # to run use  python -m examples.SQL_code_generator.main
 
-import asyncio
 
 from examples.SQL_code_generator.llm_service import MyLLMService
 
-
-def process_statements_sync():
+def main():
     service = MyLLMService()
 
     my_db_desc= """ I have a database table with the following schema:
@@ -30,10 +27,6 @@ def process_statements_sync():
 
 if __name__ == "__main__":
 
-    process_statements_sync()
+    main()
 
-    # For asynchronous processing
-    #asyncio.run(process_statements_async(bank_statements))
-
-    # For synchronous processing
-    # process_statements_sync(bank_statements)
+  
