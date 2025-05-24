@@ -150,64 +150,27 @@ we are supporting them natively.
 
 Use the **SemanticIsolator** step whenever you need to extract a specific semantic element (for example, a code snippet, a name, or any targeted fragment) from an LLM’s output.
 
-For example, imagine you asked LLM to write you a python snippet and it returns:
-
-```text
-Here is an example function:
-
-``python
-def add(a, b):
-    return a + b
-
-```
-
-
-You can isolate just the Python code block with:
-
-```
-
- {
-    'type': 'SemanticIsolation',  
-     'params': {'semantic_element_for_extraction': 'code'}
- }
-```
-Here is more full example 
-
-```python
-from non_exitent_module import run_sql_code_directly
-def main():
-    myllmservice = MyLLMService()
-    
-    my_db_desc= """ I have a database table with the following schema:
-           Table: bills
-           - bill_id (INT, Primary Key)
-           - bill_date (DATE)
-           - total (DECIMAL) """
-
-    user_question= " retrieve the total spendings for each month in the year 2023, grouped by month and ordered chronologically."
-
-    result = myllmservice.create_sql_code(user_question=user_question, database_desc=my_db_desc)
-    
-    data_from_db=run_sql_code_directly(result.content)
-
-```
-and there is a possiblity LLM will return something like this 
+For example, imagine you asked LLM to write you a SQL snippet and it returns:
 
 ```text
 Here is your answer:
 SELECT * FROM users;
 Do you need anything else?
-```
-
-In this case piping `result.content` directly into your SQL runner will fail.  This is where semanticIsolator is really useful. 
-
-Here’s how you might add a `generate_sql` method to your `MyLLMService` so we wont have this problem:
-
 
 ```
-class MyLLMService(BaseLLMService):
-    
-    def create_sql_code(self, user_question: str,  database_desc,) -> GenerationResult:
+
+And lets say you plan to use the output directly in your database connection. But in this case you cant run it because 
+it contains text like "Here is your answer:"
+
+So in such scenario where just need the pure semantic elemet this postprocessing step is useful.  
+
+Here is sample usage for above example:
+
+```python
+# in your  myllmservice 
+
+
+ def create_sql_code(self, user_question: str,  database_desc,) -> GenerationResult:
     
         formatted_prompt = f"""Here is my database description: {database_desc},
                             and here is what the user wants to learn: {user_question}.
@@ -215,7 +178,7 @@ class MyLLMService(BaseLLMService):
 
         pipeline_config = [
             {
-                'type': 'SemanticIsolation',   # uses LLM to isolate specific part of the answer.
+                'type': 'SemanticIsolation',   
                 'params': {
                     'semantic_element_for_extraction': 'SQL code'
                 }
@@ -233,7 +196,7 @@ class MyLLMService(BaseLLMService):
 
 ```
 
-The **SemanticIsolator** step fixes this by running a second query that extracts **only** the SQL snippet.
+The **SemanticIsolator** postprocessing step fixes this by running a second query that extracts **only** the semantic element you provided (in this case SQL code). 
 
 
 ## Method 2: ConvertToDict
@@ -241,8 +204,6 @@ The **SemanticIsolator** step fixes this by running a second query that extracts
 When you ask an LLM to output a JSON-like response, you typically convert it into a dictionary (for example, using `json.loads()`). However, if the output is missing quotes or otherwise isn’t strictly valid JSON, `json.loads()` will fail. **ConvertToDict** leverages the `string2dict` module to handle these edge cases—even with missing quotes or minor formatting issues, it can parse the string into a proper Python `dict`.
 
 Below are some LLM outputs where `json.loads()` fails but **ConvertToDict** succeeds:
-
-
 
 
 
@@ -257,6 +218,20 @@ Below are some LLM outputs where `json.loads()` fails but **ConvertToDict** succ
  sample_3:
 ```
   '{   \'key\': "https://dfasdfasfer.vercel.app/"}'
+  
+```
+
+Usage :
+ 
+```python
+pipeline_config = [
+           
+             {
+                'type': 'ConvertToDict', 
+                'params': {}
+             } 
+]
+
 ```
 
 
@@ -342,7 +317,10 @@ class MyLLMService(BaseLLMService):
           return generation_result
 ```
 
-# Translating a 100 pages book with various configs (chunked to pieces)
+# Translating a 100 pages book with various configs 
+
+For this experiement we are using a text which is already chunked into pieces
+
 
 | Model Name    | Method  | Max Concurrency | Max RPM | Max TPM | Elapsed Time | Total Cost |
 |---------------|---------|-----------------|---------|---------|--------------|------------|
@@ -351,7 +329,7 @@ class MyLLMService(BaseLLMService):
 | gpt4o-mini    | asynch  | 50              | 100     | 10000   |              |            |
 | gpt4o-mini    | asynch  | 100             | 150     | 20000   |              |            |
 | gpt4o-mini    | asynch  | 200             | 300     | 30000   |              |            |
-| gpt4o         | synch   |                 |         |         |              |            |
+| gpt4o         | synch   | -               |         |         |              |            |
 | gpt4o         | asynch  |                 |         |         |              |            |
 | gpt4.1-nano   | synch   |                 |         |         |              |            |
 | gpt4.1-nano   | asynch  |                 |         |         |              |            |
