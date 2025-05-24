@@ -150,19 +150,22 @@ we are supporting them natively.
 
 Use the **SemanticIsolator** step whenever you need to extract a specific semantic element (for example, a code snippet, a name, or any targeted fragment) from an LLM’s output.
 
-For example, imagine your LLM returns:
+For example, imagine you asked LLM to write you a python snippet and it returns:
 
 ```text
 Here is an example function:
 
-```python
+``python
 def add(a, b):
     return a + b
+
+```
 
 
 You can isolate just the Python code block with:
 
 ```
+
  {
                 'type': 'SemanticIsolation',  
                 'params': {
