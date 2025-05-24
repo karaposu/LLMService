@@ -2,7 +2,7 @@
 # to run use  python -m examples.SQL_code_generator.main
 
 
-from examples.SQL_code_generator.llm_service import MyLLMService
+from examples.SQL_code_generator.myllmservice import MyLLMService
 
 def main():
     service = MyLLMService()

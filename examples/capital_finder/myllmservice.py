@@ -35,7 +35,7 @@ class MyLLMService(BaseLLMService):
         generation_request = GenerationRequest(
            
             formatted_prompt=prompt,
-            model="gpt-4o",  # Use the model specified in __init__
+            model="gpt-4o-mini",  # Use the model specified in __init__
             pipeline_config=pipeline_config,
           
         )

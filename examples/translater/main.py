@@ -1,7 +1,7 @@
 # main.py
 
 import asyncio
-from examples.translater.llm_service import MyLLMService
+from examples.translater.myllmservice import MyLLMService
 
 async def process_statements_async(statements):
     service = MyLLMService()

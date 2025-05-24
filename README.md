@@ -18,6 +18,26 @@ Install LLMService via pip:
 ```bash
 pip install llmservice
 ```
+
+## Table of Contents
+
+- [Installation](#installation)
+- [What makes it unique?](#what-makes-it-unique)
+- [Main Features](#main-features)
+- [Architecture](#architecture)
+- [Usage](#usage)
+  - [Config & Installation](#config--installation)
+  - [Step 1: Subclassing `BaseLLMService` and create methods](#step-1-subclassing-basellmservice-and-create-methods)
+  - [Step 2: Import your llm layer and use the methods](#step-2-import-your-llm-layer-and-use-the-methods)
+  - [Step 3: Life is about joyment. Do not miss life.](#step-3-life-is-about-joyment-do-not-miss-life)
+- [Postprocessing Pipeline](#postprocessing-pipeline)
+  - [Method 1: SemanticIsolator](#method-1-semanticisolator)
+  - [Method 2: ConvertToDict](#method-2-converttodict)
+  - [Method 3: ExtractValue](#method-3-extractvalue)
+  - [Using Pipeline Methods together](#using-pipeline-methods-together)
+- [Async support](#async-support)
+  - [Translating a 100 pages book (chunked to pieces)](#translating-a-100-pages-book-chunked-to-pieces)
+
  
 
 ## What makes it unique?
@@ -73,7 +93,9 @@ LLMService provides an abstract `BaseLLMService` class to guide users in impleme
 
 # Usage 
 
-## Installation
+## Config & Installation
+
+Put your `OPENAI_API_KEY` inside `.env` file
 
 Install LLMService via pip:
 
@@ -87,17 +109,19 @@ Create a new Python file (e.g., `my_llm_service.py`) and extend the `BaseLLMServ
 
 
 ```python
- def translate_to_latin(self, input_paragraph: str) -> GenerationResult:
-        my_prompt=f"translate this text to latin {input_paragraph}"
 
-        generation_request = GenerationRequest(
-            formatted_prompt=my_prompt,
-            model="gpt-4o",  # Use the model specified in __init__
-        )
+class MyLLMService(BaseLLMService):
+  def translate_to_latin(self, input_paragraph: str) -> GenerationResult:
+          my_prompt=f"translate this text to latin {input_paragraph}"
 
-        # Execute the generation synchronously
-        generation_result = self.execute_generation(generation_request)
-        return generation_result
+          generation_request = GenerationRequest(
+              formatted_prompt=my_prompt,
+              model="gpt-4o",  # Use the model specified in __init__
+          )
+
+          # Execute the generation synchronously
+          generation_result = self.execute_generation(generation_request)
+          return generation_result
 ```
 
 ## Step 2: Import your llm layer and use the methods 
@@ -249,27 +273,47 @@ pipeline_config = [
 
 ```
 
-## Async support 
-LLMservice supports async methods. 
+# Async support 
+LLMservice supports async methods. Here is an example how async method looks in your myllmservice.py
+Notice we can setup max_rpm and max_tpm values
+
+```
+
+class MyLLMService(BaseLLMService):
+    def __init__(self):
+        super().__init__(default_model_name="gpt-4o-mini")
+        # now override defaults without modifying super()
+        self.set_rate_limits(max_rpm=120, max_tpm=10_000)
+        self.set_concurrency(100)
+
+  async def translate_to_latin_async(self, input_paragraph: str) -> GenerationResult:
+        
+          my_prompt=f"translate this to to latin {input_paragraph}"
+
+          generation_request = GenerationRequest(
+              formatted_prompt=my_prompt,
+              model="gpt-4o-mini",
+              operation_name="translate_to_latin",
+          )
+
+          generation_result = await self.execute_generation_async(generation_request)
+          return generation_result
+```
+
+Translating a 100 pages book (chunked to pieces)
+
+| Model Name    | Method  | Max Concurrency | Max RPM | Max TPM | Elapsed Time | Total Cost |
+|---------------|---------|-----------------|---------|---------|--------------|------------|
+| gpt4o-mini    | synch   | –               | –       | –       |              |            |
+| gpt4o-mini    | asynch  | 10              | 100     | 10000   |              |            |
+| gpt4o-mini    | asynch  | 50              | 100     | 10000   |              |            |
+| gpt4o-mini    | asynch  | 100             | 150     | 20000   |              |            |
+| gpt4o-mini    | asynch  | 200             | 300     | 30000   |              |            |
+| gpt4o         | synch   |                 |         |         |              |            |
+| gpt4o         | asynch  |                 |         |         |              |            |
+| gpt4.1-nano   | synch   |                 |         |         |              |            |
+| gpt4.1-nano   | asynch  |                 |         |         |              |            |
 
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-some notes to add to future 
-
-The Result Monad enhances error management by providing detailed insights into why a particular operation might have failed, enhancing the robustness of systems that interact with external data.
-As evident from the examples, each of these monads facilitates the creation of function chains, employing a paradigm often referred to as a “railroad approach.” This approach visualizes the sequence of functions as a metaphorical railroad track, where the code smoothly travels along, guided by the monadic structure. The beauty of this railroad approach lies in its ability to elegantly manage complex computations and transformations, ensuring a structured and streamlined flow of operations.
