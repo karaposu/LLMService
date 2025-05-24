@@ -93,7 +93,7 @@ LLMService provides an abstract `BaseLLMService` class to guide users in impleme
 
 # Usage 
 
-## Config & Installation
+## Step 0: Config & Installation
 
 Put your `OPENAI_API_KEY` inside `.env` file
 
@@ -105,7 +105,7 @@ pip install llmservice
 
 ## Step 1: Subclassing `BaseLLMService` and create methods
 
-Create a new Python file (e.g., `my_llm_service.py`) and extend the `BaseLLMService` class. And all llm using logic of your business logic will be defined here as methods. 
+Create a new Python file (e.g., `myllmservice.py`) and extend the `BaseLLMService` class. And all llm using logic of your business logic will be defined here as methods. 
 
 
 ```python
@@ -138,23 +138,40 @@ if __name__ == '__main__':
     # in this case the result will be a generation_result object which inludes all the information you need. 
 ```
 
-## Step 3: Life is about joyment. Do not miss life. 
+## Step 3: Some simple fact  
+Dont forget to live your life man. Remember all code is legacy the moment it is written.  
 
 
 # Postprocessing Pipeline  
 There are 5 custom methods integrated into LLMservice. These postprocessing methods are the most commonly used methods so 
 we are supporting them natively. 
 
-## Method 1: SemanticIsolator
+## Method 1: Semantic Isolation
 
-When you want isolate specific semantics (code piece, name, ) from LLM output you can use SemanticIsolater. 
+Use the **SemanticIsolator** step whenever you need to extract a specific semantic element (for example, a code snippet, a name, or any targeted fragment) from an LLM’s output.
 
-for example: 
+For example, imagine your LLM returns:
 
-lets have such code 
+```text
+Here is an example function:
+
+```python
+def add(a, b):
+    return a + b
+
+
+You can isolate just the Python code block with:
 
 ```
+ {
+                'type': 'SemanticIsolation',  
+                'params': {
+                    'semantic_element_for_extraction': 'code'
+ }
+```
+Here is more full example 
 
+```
 from non_exitent_module import run_sql_code_directly
 def main():
     service = MyLLMService()
@@ -172,12 +189,17 @@ def main():
     data_from_db=run_sql_code_directly(result.content)
 
 ```
-As you see we get the LLM output (result.content) directly and use that in another function which runs it as SQL code. 
-But what if LLM output includes non-SQL string like "here is your answer: " or "do you need something else?" ?
+and there is a possiblity LLM will return something like this 
 
-This is where SemanticIsolator is helpful. You tell it which semantic element it should isolate and it runs a second LLM query to extract that element only.
+```text
+Here is your answer:
+SELECT * FROM users;
+Do you need anything else?
+```
 
-So for above example we can create my_llm_service method like this:
+In this case piping `result.content` directly into your SQL runner will fail.  This is where semanticIsolator is really useful. 
+
+Here’s how you might add a `generate_sql` method to your `MyLLMService` so we wont have this problem:
 
 
 ```
@@ -209,12 +231,16 @@ class MyLLMService(BaseLLMService):
 
 ```
 
+The **SemanticIsolator** step fixes this by running a second query that extracts **only** the SQL snippet.
+
 
 ## Method 2: ConvertToDict
 
-When you ask LLM to output json like response. You also want to convert the response into a dict (usually using json.load() ) but there are many cases where output is missing quotes and jsonload will fail.  ConvertToDict uses module called 
-string2dict which handles all edge cases and even there are missing quotes it can understand and convert the string into a dictionary.
- below are some LLM outputs where json.load fails but ConvertToDict can convert
+When you ask an LLM to output a JSON-like response, you typically convert it into a dictionary (for example, using `json.loads()`). However, if the output is missing quotes or otherwise isn’t strictly valid JSON, `json.loads()` will fail. **ConvertToDict** leverages the `string2dict` module to handle these edge cases—even with missing quotes or minor formatting issues, it can parse the string into a proper Python `dict`.
+
+Below are some LLM outputs where `json.loads()` fails but **ConvertToDict** succeeds:
+
+
 
 
 ```
@@ -235,22 +261,39 @@ string2dict which handles all edge cases and even there are missing quotes it ca
 
 ## Method 3: ExtractValue
 
-Useful when you asked LLM for json output with field {"answer" : __here_is_LLM answer.__ } and you want to extract the data from the result dict using a key. This pipeline step allows you to automatically extract the value from this dictionary. 
 
-            {
-            #     'type': 'ExtractValue',       # if you asked for json output and you want to extract the data from the result dict
-            #     'params': {'key': 'answer'}
-            # }
+Use this pipeline step **with** the `ConvertToDict` method to extract a single field from a JSON-like response. Simply specify the field name as a parameter.
 
+For example, if your LLM returns:
 
-## Using Pipeline Methods together
-It is common scenario. You can pipe these methods together like this
+```json
+{"answer": "<LLM-generated answer>"}
+```
 
-      - semanticisolator can extract json part
-      - ConvertToDict can convert json into a dict 
-      - ExtractValue can help you take only value part of the dictonary
+add the following to your pipeline config:
 
-Here how it looks in code:
+```
+  {
+                'type': 'ExtractValue',  
+                 'params': {'key': 'answer'}
+ }
+```
+
+This configuration first ensures the output is parsed into a Python `dict`, then automatically returns the value associated with `"answer"`.
+
+          
+
+## Using Pipeline Methods Together
+
+A common scenario is to chain multiple pipeline steps to extract a specific value from an LLM response:
+
+1. **SemanticIsolation**  
+   Extracts the JSON-like snippet from a larger text response.  
+2. **ConvertToDict**  
+   Normalizes that snippet into a Python `dict`, even if it isn’t strictly valid JSON.  
+3. **ExtractValue**  
+   Retrieves the value associated with a given key from the dictionary.
+
 
 ```
 pipeline_config = [
@@ -273,16 +316,18 @@ pipeline_config = [
 
 ```
 
-# Async support 
-LLMservice supports async methods. Here is an example how async method looks in your myllmservice.py
-Notice we can setup max_rpm and max_tpm values
+
+## Async Support
+
+LLMService includes first-class asynchronous methods, with built-in rate and concurrency controls. You can configure `max_rpm` `max_tpm` and `max_concurrent_requests` (which indirectly governs TPM over the same window). Here’s an example for your `myllm_service.py`:
+
 
 ```
 
 class MyLLMService(BaseLLMService):
     def __init__(self):
         super().__init__(default_model_name="gpt-4o-mini")
-        # now override defaults without modifying super()
+       
         self.set_rate_limits(max_rpm=120, max_tpm=10_000)
         self.set_concurrency(100)
 
@@ -300,7 +345,7 @@ class MyLLMService(BaseLLMService):
           return generation_result
 ```
 
-Translating a 100 pages book (chunked to pieces)
+# Translating a 100 pages book with various configs (chunked to pieces)
 
 | Model Name    | Method  | Max Concurrency | Max RPM | Max TPM | Elapsed Time | Total Cost |
 |---------------|---------|-----------------|---------|---------|--------------|------------|
