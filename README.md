@@ -95,9 +95,9 @@ LLMService provides an abstract `BaseLLMService` class to guide users in impleme
 
 ## Step 0: Config & Installation
 
-Put your `OPENAI_API_KEY` inside `.env` file
+- Put your `OPENAI_API_KEY` inside `.env` file
 
-Install LLMService via pip:
+- Install LLMService via pip:
 
 ```bash
 pip install llmservice
@@ -116,7 +116,7 @@ class MyLLMService(BaseLLMService):
 
           generation_request = GenerationRequest(
               formatted_prompt=my_prompt,
-              model="gpt-4o",  # Use the model specified in __init__
+               model="gpt-4o", 
           )
 
           # Execute the generation synchronously
@@ -127,8 +127,8 @@ class MyLLMService(BaseLLMService):
 ## Step 2: Import your llm layer and use the methods 
 
 ```python
-# app.py
-from my_llm_service import MyLLMService
+# in your app.py
+from myllmservice import MyLLMService
 
 if __name__ == '__main__':
     service = MyLLMService()
