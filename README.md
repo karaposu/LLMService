@@ -167,18 +167,17 @@ You can isolate just the Python code block with:
 ```
 
  {
-                'type': 'SemanticIsolation',  
-                'params': {
-                    'semantic_element_for_extraction': 'code'
+    'type': 'SemanticIsolation',  
+     'params': {'semantic_element_for_extraction': 'code'}
  }
 ```
 Here is more full example 
 
-```
+```python
 from non_exitent_module import run_sql_code_directly
 def main():
-    service = MyLLMService()
-
+    myllmservice = MyLLMService()
+    
     my_db_desc= """ I have a database table with the following schema:
            Table: bills
            - bill_id (INT, Primary Key)
@@ -187,7 +186,7 @@ def main():
 
     user_question= " retrieve the total spendings for each month in the year 2023, grouped by month and ordered chronologically."
 
-    result = service.create_sql_code(user_question=user_question, database_desc=my_db_desc)
+    result = myllmservice.create_sql_code(user_question=user_question, database_desc=my_db_desc)
     
     data_from_db=run_sql_code_directly(result.content)
 
@@ -246,19 +245,18 @@ Below are some LLM outputs where `json.loads()` fails but **ConvertToDict** succ
 
 
 
+
+ sample_1:
 ```
- sample_1 
-
   '{\n    "key": "SELECT DATE_FORMAT(bills.bill_date, \'%Y-%m\') AS month, SUM(bills.total) AS total_spending FROM bills WHERE YEAR(bills.bill_date) = 2023 GROUP BY DATE_FORMAT(bills.bill_date, \'%Y-%m\') ORDER BY month;"\n}'
-
- sample_2 
-
+```
+ sample_2:
+```
   "{\n    'key': 'SELECT DATE_FORMAT(bill_date, \\'%Y-%m\\') AS month, SUM(total) AS total_spendings FROM bills WHERE YEAR(bill_date) = 2023 GROUP BY month ORDER BY month;'\n}"
- 
- sample_3
-
+```
+ sample_3:
+```
   '{   \'key\': "https://dfasdfasfer.vercel.app/"}'
-   
 ```
 
 
