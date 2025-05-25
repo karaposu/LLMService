@@ -110,6 +110,8 @@ Create a new Python file (e.g., `myllmservice.py`) and extend the `BaseLLMServic
 
 ```python
 
+from llmservice import BaseLLMService
+
 class MyLLMService(BaseLLMService):
   def translate_to_latin(self, input_paragraph: str) -> GenerationResult:
           my_prompt=f"translate this text to latin {input_paragraph}"
@@ -124,10 +126,10 @@ class MyLLMService(BaseLLMService):
           return generation_result
 ```
 
-## Step 2: Import your llm layer and use the methods 
+## Step 2: (in your main code) import your llm layer and use the methods 
 
 ```python
-# in your app.py
+# in your app code anywhere you need to run LLM logic
 from myllmservice import MyLLMService
 
 if __name__ == '__main__':
@@ -136,6 +138,7 @@ if __name__ == '__main__':
     print(result)
     
     # in this case the result will be a generation_result object which inludes all the information you need. 
+    # to get the result text you can print result.content
 ```
 
 ## Step 3: Some simple fact  
@@ -143,8 +146,7 @@ Dont forget to live your life man. Remember all code is legacy the moment it is 
 
 
 # Postprocessing Pipeline  
-There are 5 custom methods integrated into LLMservice. These postprocessing methods are the most commonly used methods so 
-we are supporting them natively. 
+LLMService includes five native post-processing methods (only three are illustrated here). These built-in steps cover the most common transformations and are supported out of the box.
 
 ## Method 1: Semantic Isolation
 
@@ -159,10 +161,7 @@ Do you need anything else?
 
 ```
 
-And lets say you plan to use the output directly in your database connection. But in this case you cant run it because 
-it contains text like "Here is your answer:"
-
-So in such scenario where just need the pure semantic elemet this postprocessing step is useful.  
+For example If you plan to use the LLM output directly in your database connection, any extra text like “Here is your answer:” will break SQL execution. In scenarios where you only need the raw semantic element (such as a SQL query) this post-processing step becomes essential. 
 
 Here is sample usage for above example:
 
@@ -175,6 +174,7 @@ Here is sample usage for above example:
         formatted_prompt = f"""Here is my database description: {database_desc},
                             and here is what the user wants to learn: {user_question}.
                             I want you to generate a SQL query. answer should contain only SQL code."""
+                    
 
         pipeline_config = [
             {
@@ -222,7 +222,7 @@ Below are some LLM outputs where `json.loads()` fails but **ConvertToDict** succ
 ```
 
 Usage :
- 
+
 ```python
 pipeline_config = [
            
@@ -291,7 +291,7 @@ pipeline_config = [
 
 ## Async Support
 
-LLMService includes first-class asynchronous methods, with built-in rate and concurrency controls. You can configure `max_rpm` `max_tpm` and `max_concurrent_requests` (which indirectly governs TPM over the same window). Here’s an example for your `myllm_service.py`:
+LLMService includes first-class asynchronous methods, with built-in rate and concurrency controls. You can configure `max_rpm` `max_tpm` and `max_concurrent_requests` (which indirectly governs TPM over the same window). Here’s an example for your `myllmservice.py`:
 
 
 ```

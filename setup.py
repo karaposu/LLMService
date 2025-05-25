@@ -14,15 +14,15 @@ setup(
     long_description_content_type='text/markdown',  # Type of the long description
     packages=find_packages(),  # Automatically find packages in the directory
     install_requires=[
-        'langchain' ,
-        'langchain-community',
-        'langchain-openai',
+        'langchain' , # for PromptTemplate, get_template_variables
+        'langchain-community', # for Ollama
+        'langchain-openai', # for ChatOpenAI
         'proteas',
         'string2dict',
         'indented_logger',
         'pyyaml',
         'tqdm',
-        'python-magic',
+        # 'python-magic',
         'python-dotenv',
         'pytest',
     ],
