@@ -1,13 +1,26 @@
-openai
+langchain
+langchain-community
+langchain-openai
 proteas
 string2dict
-langchain-community
 indented_logger
-langchain-openai
 pyyaml
 tqdm
 python-magic
 python-dotenv
 pytest
-langchain
+
+
+# openai
+# proteas
+# string2dict
+# langchain-community
+# indented_logger
+# langchain-openai
+# pyyaml
+# tqdm
+# python-magic
+# python-dotenv
+# pytest
+# langchain
 

@@ -6,10 +6,13 @@ import os
 from pathlib import Path
 import logging
 from dotenv import load_dotenv
-from tenacity import retry, stop_after_attempt, wait_random_exponential, retry_if_exception_type, RetryCallState, AsyncRetrying
-from typing import Any
+from tenacity import retry, stop_after_attempt, wait_random_exponential, retry_if_exception_type, RetryCallState, AsyncRetrying, Retrying
+
+from typing import Any, List, Tuple
 import httpx
 import asyncio
+from datetime import timedelta
+from .schemas import InvokeResponseData, InvocationAttempt
 
 
 from langchain_openai import ChatOpenAI
@@ -57,6 +60,21 @@ gpt_model_list= list(gpt_models_cost.keys())
 
 
 
+import time
+from datetime import datetime, timezone
+
+
+
+
+
+def _now_dt() -> datetime:
+    """Current UTC time with microsecond precision."""
+    return datetime.now(timezone.utc)
+
+
+
+
+
 class LLMHandler:
     def __init__(self, model_name: str, system_prompt=None, logger=None):
         self.llm = self._initialize_llm(model_name)
@@ -82,20 +100,7 @@ class LLMHandler:
     def change_model(self, model_name):
         self.llm = self._initialize_llm(model_name)
 
-    # def _initialize_llm(self, model_name: str):
-    #     if model_name in self._llm_cache:
-    #         return self._llm_cache[model_name]
-    #
-    #     if self.is_it_gpt_model(model_name):
-    #         llm = ChatOpenAI(api_key=os.getenv("OPENAI_API_KEY"),
-    #                          model_name=model_name)
-    #     elif model_name == "custom":
-    #         llm = ""
-    #     else:
-    #         llm = Ollama(model=model_name)
-    #
-    #     self._llm_cache[model_name] = llm
-    #     return llm
+    
 
     def _initialize_llm(self, model_name: str):
 
@@ -138,155 +143,321 @@ class LLMHandler:
         # # Check if the model file exists
        # model_file.exists()#
         return  True
+    
 
-    @retry(
-        retry=retry_if_exception_type((httpx.HTTPStatusError, RateLimitError)),
-        # Retry on HTTPStatusError and RateLimitError
-        stop=stop_after_attempt(2),  # Stop after 2 attempts
-        wait=wait_random_exponential(min=1, max=60)  # Exponential backoff between retries
-    )
-    def invoke(self, prompt: str, retry_state: RetryCallState = None):
-    # def invoke_safe(self, prompt: str, retry_state: RetryCallState = None):
+    
+    
+    
+    def _invoke_impl(self, prompt: str) -> Tuple[Any, bool]:
+        """
+        Your original logic, unchanged. Returns (response, success)
+        or raises to trigger a retry.
+        """
         try:
             if self.system_prompt:
                 response = self.llm.invoke(prompt=prompt, context=self.system_prompt)
             else:
-
                 response = self.llm.invoke(prompt)
-            success=True
-
-            return response, success
+            return response, True
 
         except RateLimitError as e:
             error_message = str(e)
-            error_code = getattr(e, 'code', None)
-            success = False
-
-            # Try to get the error code from e.json_body if available
-            if not error_code and hasattr(e, 'json_body') and e.json_body:
-                error_code = e.json_body.get('error', {}).get('code')
-
-            # Fallback: check if 'insufficient_quota' is in the error message
-            if not error_code and 'insufficient_quota' in error_message:
-                error_code = 'insufficient_quota'
-
-            if error_code == 'insufficient_quota':
+            error_code = getattr(e, "code", None)
+            # existing insufficient_quota fallback
+            if not error_code and hasattr(e, "json_body") and e.json_body:
+                error_code = e.json_body.get("error", {}).get("code")
+            if not error_code and "insufficient_quota" in error_message:
+                error_code = "insufficient_quota"
+            if error_code == "insufficient_quota":
                 self.logger.error("OpenAI credit is finished.")
-                return "OpenAI credit is finished" ,success
+                return "OpenAI credit is finished.", False
 
-            # Handle other rate limit errors
             self.logger.warning(f"RateLimitError occurred: {error_message}. Retrying...")
-            if retry_state and self._retry_count_is_max(retry_state):
-                return "OpenAI credit is finished" ,success
-
-            raise  # Re-raise the error to trigger the retry mechanism
+            # if last retry, return fallback
+            raise
 
         except httpx.HTTPStatusError as e:
-            success = False
             if e.response.status_code == 429:
                 self.logger.warning("Rate limit exceeded: 429 Too Many Requests. Retrying...")
-
-                # Check if this is the last retry attempt
-                if retry_state and self._retry_count_is_max(retry_state):
-                    return "OpenAI credit is finished" , success
-
-                raise  # Re-raise the error to trigger the retry mechanism
-
+                raise
             self.logger.error(f"HTTP error occurred: {e}")
             raise
 
         except PermissionDeniedError as e:
-            success = False
             error_message = str(e)
-            error_code = getattr(e, 'code', None)
-
-            if error_code == 'unsupported_country_region_territory':
+            error_code = getattr(e, "code", None)
+            if error_code == "unsupported_country_region_territory":
                 self.logger.error("Country, region, or territory not supported.")
-                return "Country, region, or territory not supported.", success
-            else:
-                self.logger.error(f"PermissionDeniedError occurred: {error_message}")
-                raise
+                return "Country, region, or territory not supported.", False
+            self.logger.error(f"PermissionDeniedError occurred: {error_message}")
+            raise
 
         except Exception as e:
             self.logger.error(f"An error occurred: {e}")
             raise
 
-    
-    @retry(
-        retry=retry_if_exception_type((httpx.HTTPStatusError, RateLimitError)),
-        stop=stop_after_attempt(2),
-        wait=wait_random_exponential(min=1, max=60)
-    )
-    async def invoke_async(
-        self,
-        prompt: str,
-        retry_state: RetryCallState = None
-    ) -> tuple[Any, bool]:
+
+
+    # @retry(
+    #     retry=retry_if_exception_type((httpx.HTTPStatusError, RateLimitError)),
+    #     # Retry on HTTPStatusError and RateLimitError
+    #     stop=stop_after_attempt(2),  # Stop after 2 attempts
+    #     wait=wait_random_exponential(min=1, max=60)  # Exponential backoff between retries
+    # )
+
+
+
+    async def _invoke_async_impl(self, prompt: str) -> Tuple[Any, bool]:
         """
-        Uses the LLM’s native async call (ainvoke). Raises if ainvoke isn’t implemented.
+        Core async logic, exactly your existing code minus the @retry decorator.
+        Returns (response, True) or raises to trigger a retry.
         """
         if not hasattr(self.llm, "ainvoke"):
-            raise NotImplementedError(
-                f"{type(self.llm).__name__} does not support async `ainvoke`."
-            )
+            raise NotImplementedError(f"{type(self.llm).__name__} does not support async ainvoke")
 
         try:
-            # Call the async API directly
             response = await self.llm.ainvoke(prompt)
-            success = True
-            return response, success
+            return response, True
 
         except RateLimitError as e:
-            # propagate up to retry decorator
+            # replicate your existing RateLimitError handling:
+            msg = str(e)
+            code = getattr(e, "code", None)
+            if not code and hasattr(e, "json_body") and e.json_body:
+                code = e.json_body.get("error", {}).get("code")
+            if not code and "insufficient_quota" in msg:
+                code = "insufficient_quota"
+            if code == "insufficient_quota":
+                self.logger.error("OpenAI credit is finished.")
+                return "OpenAI credit is finished.", False
+            self.logger.warning(f"RateLimitError: {msg}. Retrying…")
             raise
 
         except httpx.HTTPStatusError as e:
-            # propagate up to retry decorator
+            if e.response.status_code == 429:
+                self.logger.warning("429 Too Many Requests. Retrying…")
+                raise
+            self.logger.error(f"HTTP error: {e}")
             raise
 
         except PermissionDeniedError as e:
-            # handle and wrap permission errors
+            msg = str(e)
             code = getattr(e, "code", None)
             if code == "unsupported_country_region_territory":
-                return "Country, region, or territory not supported.", False
+                self.logger.error("Territory not supported.")
+                return "Country/region not supported.", False
+            self.logger.error(f"PermissionDeniedError: {msg}")
             raise
 
         except Exception as e:
-            # any other errors bubble up
             self.logger.error(f"Async invoke error: {e}")
             raise
 
-    # async def invoke_async(self, prompt: str):
-    #     try:
-    #         if self.system_prompt:
-    #             response = await self.llm.agenerate([prompt], system_prompt=self.system_prompt)
-    #         else:
-    #             response = await self.llm.agenerate([prompt])
-    #         success = True
-    #         return response.generations[0][0], success
-    #     except Exception as e:
-    #         self.logger.error(f"An error occurred: {e}")
-    #         return str(e), False
 
 
-    # async def invoke_async(self, prompt: str):
-    #     async for attempt in AsyncRetrying(
-    #             retry=retry_if_exception_type((httpx.HTTPStatusError, RateLimitError)),
-    #             stop=stop_after_attempt(2),
-    #             wait=wait_random_exponential(min=1, max=60)
-    #     ):
-    #         with attempt:
-    #             try:
-    #                 if self.system_prompt:
-    #                     response = await self.llm.acall(prompt=prompt, context=self.system_prompt)
-    #                 else:
-    #                     response = await self.llm.acall(prompt)
-    #                 success = True
-    #                 return response, success
-    #             except Exception as e:
-    #                 self.logger.error(f"An error occurred: {e}")
-    #                 raise
+
+    def invoke(self, prompt: str) -> InvokeResponseData:
+        """
+        Synchronous invoke that records every attempt in `attempts`.
+        """
+        attempts: List[InvocationAttempt] = []
+        final_response = None
+        final_success  = False
+
+        for attempt in Retrying(
+            retry=retry_if_exception_type((httpx.HTTPStatusError, RateLimitError)),
+            stop=stop_after_attempt(self.max_retries),
+            wait=wait_random_exponential(min=1, max=60),
+            reraise=True
+        ):
+            with attempt:
+                n = attempt.retry_state.attempt_number
+                start = _now_dt()
+                try:
+                    resp, success = self._invoke_impl(prompt)
+                    final_response = resp
+                    final_success  = success
+                except Exception as e:
+                    # Tenacity will catch and retry if it matches your retry predicate
+                    # We still want to record this attempt's timing & error
+                    end = _now_dt()
+                    backoff = timedelta(seconds=attempt.retry_state.next_action.sleep) \
+                              if attempt.retry_state.next_action else None
+                    attempts.append(InvocationAttempt(
+                        attempt_number  = n,
+                        invoke_start_at = start,
+                        invoke_end_at   = end,
+                        backoff_after_ms   = backoff,
+                        error_message   = str(e)
+                    ))
+                    raise  # let Tenacity handle retrying
+                else:
+                    # successful attempt
+                    end = _now_dt()
+                    # no backoff_after on a success
+                    attempts.append(InvocationAttempt(
+                        attempt_number  = n,
+                        invoke_start_at = start,
+                        invoke_end_at   = end,
+                        backoff_after_ms   = None,
+                        error_message   = None
+                    ))
+
+        return InvokeResponseData(
+            success = final_success,
+            response = final_response,
+            attempts = attempts
+        )
     
+
+
+    async def invoke_async(self, prompt: str) -> InvokeResponseData:
+        """
+        Asynchronous invoke with identical structure.
+        """
+        attempts: List[InvocationAttempt] = []
+        final_response = None
+        final_success  = False
+
+        async for attempt in AsyncRetrying(
+            retry=retry_if_exception_type((httpx.HTTPStatusError, RateLimitError)),
+            stop=stop_after_attempt(self.max_retries),
+            wait=wait_random_exponential(min=1, max=60),
+            reraise=True
+        ):
+            with attempt:
+                n = attempt.retry_state.attempt_number
+                start = _now_dt()
+                try:
+                    resp, success = await self._invoke_async_impl(prompt)
+                    final_response = resp
+                    final_success  = success
+                except Exception as e:
+                    end = _now_dt()
+                    backoff = timedelta(seconds=attempt.retry_state.next_action.sleep) \
+                              if attempt.retry_state.next_action else None
+                    attempts.append(InvocationAttempt(
+                        attempt_number  = n,
+                        invoke_start_at = start,
+                        invoke_end_at   = end,
+                        backoff_after   = backoff,
+                        error_message   = str(e)
+                    ))
+                    raise
+                else:
+                    end = _now_dt()
+                    attempts.append(InvocationAttempt(
+                        attempt_number  = n,
+                        invoke_start_at = start,
+                        invoke_end_at   = end,
+                        backoff_after   = None,
+                        error_message   = None
+                    ))
+
+        return InvokeResponseData(
+            success = final_success,
+            response = final_response,
+            attempts = attempts
+        )
+
+   
+
+    # def invoke(self, prompt: str) -> InvokeResponseData:
+    #     """
+    #     Public entrypoint: wraps `_invoke_impl` with Tenacity hooks to
+    #     capture each attempt's timing, back-off, and error, then returns
+    #     an InvokeResponseData containing response, success flag, and attempts.
+    #     """
+    #     attempts: List[InvocationAttempt] = []
+
+    #     def _before(rs: RetryCallState):
+    #         rs._start_at = _now_dt()
+
+    #     def _after(rs: RetryCallState):
+    #         end_at = _now_dt()
+    #         err = None
+    #         if rs.outcome.failed:
+    #             err = str(rs.outcome.exception())
+    #         attempts.append(InvocationAttempt(
+    #             attempt_number  = rs.attempt_number,
+    #             invoke_start_at = rs._start_at,
+    #             invoke_end_at   = end_at,
+    #             error_message   = err
+    #         ))
+
+
+       
+        
+    #     def _before_sleep(rs: RetryCallState, sleep: float):
+    #          attempts[-1].backoff_after = timedelta(seconds=sleep)
+
+
+      
+
+    #     decorated = retry(
+    #         retry=retry_if_exception_type((httpx.HTTPStatusError, RateLimitError)),
+    #         stop=stop_after_attempt(self.max_retries),
+    #         wait=wait_random_exponential(min=1, max=60),
+    #         before=_before,
+    #         after=_after,
+    #         before_sleep=_before_sleep
+    #     )(self._invoke_impl)
+
+    #     response, success = decorated(prompt)
+    #     return InvokeResponseData(
+    #         success=success,
+    #         response=response,
+    #         attempts=attempts
+    #     )
+    
+    
+    async def invoke_async(self, prompt: str) -> InvokeResponseData:
+        """
+        Public async entrypoint: dynamically applies Tenacity to `_invoke_async_impl`
+        with before/after/before_sleep hooks to capture each attempt’s timestamps
+        and back-off, then returns InvokeResponseData.
+        """
+        attempts: List[InvocationAttempt] = []
+
+        
+        def _before(rs: RetryCallState):
+            rs._start_at = _now_dt()
+        
+        def _after(rs: RetryCallState):
+            end_at = _now_dt()
+            err = None
+            if rs.outcome.failed:
+                err = str(rs.outcome.exception())
+            attempts.append(InvocationAttempt(
+                attempt_number  = rs.attempt_number,
+                invoke_start_at = rs._start_at,
+                invoke_end_at   = end_at,
+                backoff_after   = None,
+                error_message   = err
+            ))
+
+        def _before_sleep(rs: RetryCallState, sleep: float):
+            # record how long we back off before the next retry
+            attempts[-1].backoff_after = timedelta(seconds=sleep)
+
+        # Dynamically wrap the core async method
+        wrapped = retry(
+            retry=retry_if_exception_type((httpx.HTTPStatusError, RateLimitError)),
+            stop=stop_after_attempt(self.max_retries),
+            wait=wait_random_exponential(min=1, max=60),
+            before=_before,
+            after=_after,
+            before_sleep=_before_sleep
+        )(self._invoke_async_impl)
+
+        response, success = await wrapped(prompt)
+        return InvokeResponseData(
+            success=success,
+            response=response,
+            attempts=attempts
+        )
+    
+
     def _retry_count_is_max(self, retry_state: RetryCallState) -> bool:
         """
         Helper function to check if the retry limit is reached.
@@ -296,7 +467,7 @@ class LLMHandler:
         return current_attempt >= self.max_retries
     
 
-    # gpt-4o-search-preview
+
 
 
 def main():

@@ -4,6 +4,7 @@ import logging
 import time
 from typing import Optional, Dict, Any, List, Union
 from dataclasses import dataclass, field
+import uuid, time, asyncio
 
 from llmservice.llm_handler import LLMHandler  # Ensure this is correctly imported
 from string2dict import String2Dict  # Ensure this is installed and available
@@ -64,7 +65,9 @@ Provide the answer strictly in the following JSON format, do not combine anythin
 
 'answer': 'here_is_isolated_answer'
 """
-
+    def _new_trace_id(self) -> str:
+        return str(uuid.uuid4())
+    
     def _debug(self, message):
 
         if self.debug:
@@ -120,6 +123,7 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         Asynchronously generates the output and processes post‐processing,
         mirroring the logic of generate_output but using LLMHandler.invoke_async.
         """
+        trace_id = self._new_trace_id()     
         # Unpack request
         placeholders        = generation_request.data_for_placeholders
         unformatted_prompt  = generation_request.unformatted_prompt
@@ -157,6 +161,7 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         except Exception as e:
             return GenerationResult(
                 success=False,
+                trace_id=trace_id,              
                 meta=meta,
                 raw_content=None,
                 content=None,
@@ -174,6 +179,7 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         if not success:
             return GenerationResult(
                 success=False,
+                trace_id=trace_id,           
                 meta=meta,
                 raw_content=None,
                 content=None,
@@ -195,6 +201,7 @@ Provide the answer strictly in the following JSON format, do not combine anythin
             except KeyError:
                 return GenerationResult(
                     success=False,
+                     trace_id=trace_id,      
                     meta=meta,
                     raw_content=None,
                     content=None,
@@ -216,6 +223,7 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         # Build initial GenerationResult
         generation_result = GenerationResult(
             success=True,
+             trace_id=trace_id,      
             meta=meta,
             raw_content=r.content,
             content=None,
@@ -429,6 +437,8 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         :return: GenerationResult object.
         """
         # Enforce either-or contract
+
+        trace_id = self._new_trace_id() 
         has_formatted = formatted_prompt is not None
         has_unformatted = unformatted_template is not None and data_for_placeholders is not None
         if has_formatted and has_unformatted:
@@ -464,14 +474,19 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         # Invoke LLM
         t1 = time.time()
         llm_handler = LLMHandler(model_name=model_name or self.llm_handler.model_name, logger=self.logger)
-        r, success = llm_handler.invoke(prompt=prompt_to_send)
+        
+        invoke_response_data= llm_handler.invoke(prompt=prompt_to_send)
+        r=invoke_response_data.response
+        attempts=invoke_response_data.attempts
+       
         t2 = time.time()
         elapsed = t2 - t1
         meta["elapsed_time_for_invoke"] = elapsed
 
-        if not success:
+        if not  invoke_response_data.success:
             return GenerationResult(
                 success=False,
+                trace_id=trace_id,      
                 meta=meta,
                 raw_content=None,
                 content=None,
@@ -492,6 +507,7 @@ Provide the answer strictly in the following JSON format, do not combine anythin
             except KeyError:
                 return GenerationResult(
                     success=False,
+                     trace_id=trace_id,      
                     meta=meta,
                     raw_content=None,
                     content=None,
@@ -512,6 +528,7 @@ Provide the answer strictly in the following JSON format, do not combine anythin
 
         return GenerationResult(
             success=True,
+             trace_id=trace_id,      
             meta=meta,
             raw_content=r.content,
             content=None,
