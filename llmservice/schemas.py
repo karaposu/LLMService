@@ -6,8 +6,11 @@ import pprint
 from datetime import datetime, timezone, timedelta
 
 
-
+from dataclasses import dataclass, field
+from typing import Any, List, Optional
 import json
+
+
 
 def indent_text(text, indent):
     indentation = ' ' * indent
@@ -15,12 +18,9 @@ def indent_text(text, indent):
 
 
 
-
-
 @dataclass
 class InvocationAttempt:
     attempt_number:    int
-
     invoke_start_at:      datetime
     invoke_end_at:        datetime
     backoff_after_ms:  Optional[int] = None
@@ -29,8 +29,8 @@ class InvocationAttempt:
 
     def duration_ms(self) -> float:
         """Milliseconds spent in this invoke call."""
-        return (self.invoke_end - self.invoke_start).total_seconds() * 1_000
-
+        return (self.invoke_end_at - self.invoke_start_at).total_seconds() * 1_000
+    
     def backoff_ms(self) -> float:
         """Milliseconds of backoff after this attempt (0 if none)."""
         return self.backoff_after_ms.total_seconds() * 1_000 if self.backoff_after_ms else 0.0
@@ -38,9 +38,6 @@ class InvocationAttempt:
 
 
 
-
-from dataclasses import dataclass, field
-from typing import Any, List, Optional
 
 @dataclass
 class InvokeResponseData:
@@ -50,7 +47,9 @@ class InvokeResponseData:
     """
     success: bool
     response: Any
+    usage: Any
     attempts: List[InvocationAttempt] = field(default_factory=list)
+  
 
     # Derived metrics, not passed in by caller
     total_duration_ms: float         = field(init=False)
@@ -80,12 +79,10 @@ class InvokeResponseData:
 
 @dataclass
 class EventTimestamps:
-    generation_requested_at:      datetime
+    generation_requested_at:      Optional[datetime] = None
     generation_enqueued_at:       Optional[datetime] = None
     generation_dequeued_at:       Optional[datetime] = None
-
     attempts:                     List[InvocationAttempt] = field(default_factory=list)
-
     semanticisolation_start_at:   Optional[datetime] = None
     semanticisolation_end_at:     Optional[datetime] = None
 
@@ -121,40 +118,60 @@ class EventTimestamps:
             return (self.postprocessing_completed_at - last_end).total_seconds() * 1_000
         return 0.0
 
-    def to_dict(self) -> Dict[str, any]:
-        data: Dict[str, any] = {
-            "generation_requested_at":      self.generation_requested_at.isoformat(),
-            "generation_enqueued_at":       self.generation_enqueued_at.isoformat() if self.generation_enqueued_at else None,
-            "generation_dequeued_at":       self.generation_dequeued_at.isoformat() if self.generation_dequeued_at else None,
-            "postprocessing_completed_at":  self.postprocessing_completed_at.isoformat() if self.postprocessing_completed_at else None,
-            "generation_completed_at":      self.generation_completed_at.isoformat() if self.generation_completed_at else None,
-            "attempts": [
-                {
-                    "n": a.attempt_number,
-                    "invoke_start_at": a.invoke_start_at.isoformat(),
-                    "invoke_end_at":   a.invoke_end_at.isoformat(),
-                    "duration_ms":     a.duration_ms(),
-                    "backoff_ms":      a.backoff_ms(),
-                    "error_message":   a.error_message,
-                }
-                for a in self.attempts
-            ],
-            "total_duration_ms":          self.total_duration_ms(),
-            "invoke_durations_ms":        self.invoke_durations_ms(),
-            "total_backoff_ms":           self.total_backoff_ms(),
-            "postprocessing_duration_ms": self.postprocessing_duration_ms(),
-        }
-        # include any explicit step times if present
-        for attr in (
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Serialize only those fields that are not None.
+        """
+        data: Dict[str, Any] = {}
+
+        # Only include top‐level timestamps if they’re not None
+        if self.generation_requested_at:
+            data["generation_requested_at"] = self.generation_requested_at.isoformat()
+        if self.generation_enqueued_at:
+            data["generation_enqueued_at"] = self.generation_enqueued_at.isoformat()
+        if self.generation_dequeued_at:
+            data["generation_dequeued_at"] = self.generation_dequeued_at.isoformat()
+
+        # Always include attempts (could be empty, but safe to list)
+        data["attempts"] = [
+            {
+                "n":               a.attempt_number,
+                "invoke_start_at": a.invoke_start_at.isoformat(),
+                "invoke_end_at":   a.invoke_end_at.isoformat(),
+                "duration_ms":     a.duration_ms(),
+                "backoff_ms":      a.backoff_ms(),
+                "error_message":   a.error_message,
+            }
+            for a in self.attempts
+        ]
+
+        # Derived metrics
+        # data["attempt_count"] = self.attempt_count
+        # data["retried"]       = self.retried
+        data["total_duration_ms"] = self.total_duration_ms
+        data["invoke_durations_ms"] = self.invoke_durations_ms
+        data["total_backoff_ms"]    = self.total_backoff_ms
+        data["postprocessing_duration_ms"] = self.postprocessing_duration_ms
+
+        # Include any explicit step timestamps if not None
+        step_fields = [
             "semanticisolation_start_at", "semanticisolation_end_at",
             "converttodict_start_at",     "converttodict_end_at",
             "extractvalue_start_at",      "extractvalue_end_at",
-            "stringmatchvalidation_start_at","stringmatchvalidation_end_at",
+            "stringmatchvalidation_start_at", "stringmatchvalidation_end_at",
             "jsonload_start_at",          "jsonload_end_at"
-        ):
+        ]
+        for attr in step_fields:
             ts = getattr(self, attr)
             if ts:
                 data[attr] = ts.isoformat()
+
+        # Include postprocessing and generation completed if not None
+        if self.postprocessing_completed_at:
+            data["postprocessing_completed_at"] = self.postprocessing_completed_at.isoformat()
+        if self.generation_completed_at:
+            data["generation_completed_at"] = self.generation_completed_at.isoformat()
+
         return data
 
 
@@ -175,7 +192,9 @@ class GenerationRequest:
     number_of_retries: Optional[int] = None
     pipeline_config: List[Dict[str, Any]] = field(default_factory=list)
     fail_fallback_value: Optional[str] = None
-    
+
+    # generation_requested_at  =None
+
     def __post_init__(self):
         has_formatted    = self.formatted_prompt is not None
         has_unformatted  = self.unformatted_prompt is not None
@@ -212,6 +231,25 @@ class PipelineStepResult:
 
 
 
+#  return GenerationResult(
+#                 success=False,
+#                 trace_id=trace_id,      
+#                 usage=usage,
+#                 raw_content=None,
+#                 content=None,
+#                 retried= retried, 
+#                 retried_count= retried_count,
+#                 total_invoke_duration_ms= total_invoke_duration_ms, 
+#                 total_backoff_ms=total_backoff_ms, 
+#                 error_message=last_error_message,
+#                 model=llm_handler.model_name,
+#                 formatted_prompt=prompt_to_send,
+#                 unformatted_prompt=unformatted_template,
+#                 request_id=request_id,
+#                 operation_name=operation_name
+#             )
+
+
 @dataclass
 class GenerationResult:
     success: bool
@@ -219,15 +257,24 @@ class GenerationResult:
     request_id: Optional[Union[str, int]] = None
     content: Optional[Any] = None
     raw_content: Optional[str] = None  # Store initial LLM output
+
+
+    retried:  Optional[Any] = None, 
+    attempt_count:  Optional[Any] = None,
+# retried_count
+    
+    total_invoke_duration_ms:  Optional[Any] = None, 
+    total_backoff_ms: Optional[Any] = None, 
+
     operation_name: Optional[str] = None
-    meta: Dict[str, Any] = field(default_factory=dict)
+    usage: Dict[str, Any] = field(default_factory=dict)
     elapsed_time: Optional[float] = None
     error_message: Optional[str] = None
     model: Optional[str] = None
     formatted_prompt: Optional[str] = None
     unformatted_prompt: Optional[str] = None
     response_type: Optional[str] = None
-    how_many_retries_run: Optional[int] = None
+   
     pipeline_steps_results: List[PipelineStepResult] = field(default_factory=list)
     generation_request: Optional[GenerationRequest] = None
     rpm_at_the_beginning: Optional[int] = None
@@ -238,55 +285,101 @@ class GenerationResult:
     # ← NEW: embed our structured timestamps
 
     timestamps: Optional[EventTimestamps] = None
-    
+
+
     def __str__(self) -> str:
-        lines = [
-            f"▶️ GenerationResult:",
-            f"   • Success: {self.success}",
-            f"   • Content: {self.content!r}",
-            f"   • Model: {self.model}",
-            f"   • Elapsed: {self.elapsed_time:.2f}s" if self.elapsed_time is not None else "   • Elapsed: N/A",
-        ]
-
-
-        if self.timestamps:
-            td = self.timestamps.to_dict()
-            if "generation_requested_at" in td and "generation_completed_at" in td:
-                total = td["generation_completed_at"] - td["generation_requested_at"]
-                lines.append(f"   • Total Latency: {total} ms")
-            if td.get("attempts"):
-                first = td["attempts"][0]
-                lines.append(f"   • First Invoke: {first['duration_ms']} ms")
-                if len(td["attempts"]) > 1:
-                    lines.append(f"   • Retries: {len(td['attempts']) - 1}")
-                    lines.append(f"   • Total Back-off: {sum(a.get('backoff_after_ms', 0) for a in td['attempts'])} ms")
-
-        if self.meta:
-            meta_str = json.dumps(self.meta, indent=4)
-            lines.append("   • Meta:")
-            for ln in meta_str.splitlines():
-                lines.append("     " + ln)
-
-        if self.pipeline_steps_results:
-            lines.append("   • Pipeline Steps:")
-            for step in self.pipeline_steps_results:
-                status = "Success" if step.success else f"Failed ({step.error_message})"
-                lines.append(f"     - {step.step_type}: {status}")
-        
-        # The rest of the fields
-        lines.append(f"   • Request ID: {self.request_id}")
-        lines.append(f"   • Operation: {self.operation_name}")
-        if self.error_message:
-            lines.append(f"   • Error: {self.error_message}")
-        if self.raw_content and self.raw_content != self.content:
-            lines.append("   • Raw Content:")
-            lines.append(f"{self.raw_content!r}")
-        lines.append(f"   • Formatted Prompt: {self.formatted_prompt!r}")
-        lines.append(f"   • Unformatted Prompt: {self.unformatted_prompt!r}")
-        lines.append(f"   • Response Type: {self.response_type}")
-        lines.append(f"   • Retries: {self.how_many_retries_run}")
-        
+        lines = []
+        for f in fields(self):
+            name = f.name
+            value = getattr(self, name)
+            
+            # For dictionaries or lists, pretty‐print JSON style for readability:
+            if isinstance(value, (dict, list)):
+                pretty = json.dumps(value, indent=4)
+                # Indent each line of the JSON by two spaces
+                indented = "\n".join("  " + line for line in pretty.splitlines())
+                lines.append(f"{name}:\n{indented}")
+            else:
+                lines.append(f"{name}: {value}")
         return "\n".join(lines)
+    
+    # def __str__(self) -> str:
+    #     lines = [
+    #         f"▶️ GenerationResult:",
+    #         f"   • Success: {self.success}",
+    #         f"   • Content: {self.content!r}",
+    #         f"   • Model: {self.model}",
+    #         f"   • Elapsed: {self.elapsed_time:.2f}s" if self.elapsed_time is not None else "   • Elapsed: N/A",
+    #     ]
+
+
+    #     # 1) If EventTimestamps is present, always print a dedicated "Attempts:" block
+    #     if self.timestamps:
+    #         td = self.timestamps.to_dict()
+    #         attempts_list = td.get("attempts", [])
+
+    #         # Print "Attempts:" if at least one InvocationAttempt exists
+    #         if attempts_list:
+    #             lines.append("   • Attempts:")
+    #             for idx, attempt in enumerate(attempts_list, start=1):
+    #                 dur = attempt.get("duration_ms", 0.0)
+    #                 backoff = attempt.get("backoff_ms", 0.0)
+    #                 err = attempt.get("error_message")
+
+    #                 start_iso = attempt.get("invoke_start_at", "")
+    #                 end_iso   = attempt.get("invoke_end_at", "")
+
+    #                 lines.append(
+    #                     f"     - Attempt {idx}: duration={dur:.2f} ms, "
+    #                     f"backoff={backoff:.2f} ms, "
+    #                     f"start_at={start_iso}, end_at={end_iso}"
+    #                     + (f", error='{err}'" if err else "")
+    #                 )
+
+    #             # After listing all, show “First Invoke” & “Retries” summary:
+    #             first = attempts_list[0]
+    #             dur0 = first.get("duration_ms", 0.0)
+    #             lines.append(f"   • First Invoke (duration): {dur0:.2f} ms")
+
+    #             if len(attempts_list) > 1:
+    #                 retry_count = len(attempts_list) - 1
+    #                 lines.append(f"   • Retries: {retry_count}")
+    #                 total_backoff = td.get("total_backoff_ms", 0.0)
+    #                 lines.append(f"   • Total Back-off: {total_backoff:.2f} ms")
+
+    #         # 2) Only print “Total Latency” if both generation_requested_at & generation_completed_at exist
+    #         if td.get("generation_requested_at") and td.get("generation_completed_at"):
+    #             total_ms = td.get("total_duration_ms", 0.0)
+    #             lines.append(f"   • Total Latency: {total_ms:.2f} ms")
+
+                 
+        
+    #     if self.usage:
+    #         meta_str = json.dumps(self.usage, indent=4)
+    #         lines.append("   • Meta:")
+    #         for ln in meta_str.splitlines():
+    #             lines.append("     " + ln)
+
+    #     if self.pipeline_steps_results:
+    #         lines.append("   • Pipeline Steps:")
+    #         for step in self.pipeline_steps_results:
+    #             status = "Success" if step.success else f"Failed ({step.error_message})"
+    #             lines.append(f"     - {step.step_type}: {status}")
+        
+    #     # The rest of the fields
+    #     lines.append(f"   • Request ID: {self.request_id}")
+    #     lines.append(f"   • Operation: {self.operation_name}")
+    #     if self.error_message:
+    #         lines.append(f"   • Error: {self.error_message}")
+    #     if self.raw_content and self.raw_content != self.content:
+    #         lines.append("   • Raw Content:")
+    #         lines.append(f"{self.raw_content!r}")
+    #     lines.append(f"   • Formatted Prompt: {self.formatted_prompt!r}")
+    #     lines.append(f"   • Unformatted Prompt: {self.unformatted_prompt!r}")
+    #     lines.append(f"   • Response Type: {self.response_type}")
+    #     lines.append(f"   • Retries: {self.how_many_retries_run}")
+        
+    #     return "\n".join(lines)
 
 
 

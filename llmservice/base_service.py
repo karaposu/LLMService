@@ -8,6 +8,8 @@ The class now relies on `MetricsRecorder` for:
     • cumulative cost
 """
 
+ # to run   python -m llmservice.base_service
+
 from __future__ import annotations
 
 import asyncio
@@ -16,11 +18,14 @@ import logging
 import time
 from abc import ABC
 from collections import deque
-from typing import Optional
+from typing import Optional, Tuple
 
 from llmservice.generation_engine import GenerationEngine, GenerationRequest, GenerationResult
 from llmservice.live_metrics import MetricsRecorder        # ← NEW
 from llmservice.schemas import UsageStats
+from .utils import _now_dt
+
+
 
 
 class BaseLLMService(ABC):
@@ -106,29 +111,119 @@ class BaseLLMService(ABC):
     # ------------------------------------------------------------------ #
     #  Rate-limit waits
     # ------------------------------------------------------------------ #
-    async def _wait_if_rate_limited(self) -> None:
+
+    async def _wait_if_rate_limited_async(self) -> Tuple[bool, int, int]:
+        """
+        If RPM limit is reached, sleeps until the window refreshes.
+        Returns:
+        waited (bool)         – True if any sleep occurred  
+        loop_count (int)      – how many times we looped/slept  
+        total_waited_ms (int) – cumulative milliseconds spent sleeping  
+        """
+        waited = False
+        loop_count = 0
+        total_waited_ms = 0
+
         while self.metrics.is_rpm_limited():
-            wait_for = self._secs_until_window_refresh(self.metrics.sent_ts)
-            self.logger.warning(f"RPM cap reached. Sleeping {wait_for:.2f}s.")
-            await asyncio.sleep(wait_for)
+            waited = True
+            loop_count += 1
 
-    def _wait_if_rate_limited_sync(self) -> None:
+            wait_for_s = self._secs_until_window_refresh(self.metrics.sent_ts)
+            wait_ms = int(wait_for_s * 1000)
+            total_waited_ms += wait_ms
+
+            self.logger.warning(
+                f"RPM cap reached. Sleeping {wait_for_s:.2f}s ({wait_ms} ms), loop #{loop_count}."
+            )
+            await asyncio.sleep(wait_for_s)
+
+        return waited, loop_count, total_waited_ms
+
+    def _wait_if_rate_limited_sync(self) -> Tuple[bool, int, int]:
+        """
+        If RPM limit is reached, sleeps until the window refreshes.
+        Returns:
+        waited (bool)         – True if any sleep occurred  
+        loop_count (int)      – how many times we looped/slept  
+        total_waited_ms (int) – cumulative milliseconds spent sleeping  
+        """
+        waited = False
+        loop_count = 0
+        total_waited_ms = 0
+
         while self.metrics.is_rpm_limited():
-            wait_for = self._secs_until_window_refresh(self.metrics.sent_ts)
-            self.logger.warning(f"RPM cap reached. Sleeping {wait_for:.2f}s (sync).")
-            time.sleep(wait_for)
+            waited = True
+            loop_count += 1
 
-    async def _wait_if_token_limited(self) -> None:
-        while self.metrics.is_tpm_limited():
-            wait_for = self._secs_until_window_refresh(self.metrics.tok_ts, is_pair=True)
-            self.logger.warning(f"TPM cap reached. Sleeping {wait_for:.2f}s.")
-            await asyncio.sleep(wait_for)
+            wait_for_s = self._secs_until_window_refresh(self.metrics.sent_ts)
+            wait_ms = int(wait_for_s * 1000)
+            total_waited_ms += wait_ms
 
-    def _wait_if_token_limited_sync(self) -> None:
+            self.logger.warning(
+                f"RPM cap reached. Sleeping {wait_for_s:.2f}s ({wait_ms} ms), loop #{loop_count}."
+            )
+            time.sleep(wait_for_s)
+
+        return waited, loop_count, total_waited_ms
+
+
+
+    async def _wait_if_token_limited_async(self) -> Tuple[bool, int, int]:
+        """
+        If TPM limit is reached, sleeps until the window refreshes.
+        Returns:
+        waited (bool)         – True if any sleep occurred  
+        loop_count (int)      – how many times we looped/slept  
+        total_waited_ms (int) – cumulative milliseconds spent sleeping  
+        """
+        waited = False
+        loop_count = 0
+        total_waited_ms = 0
+
         while self.metrics.is_tpm_limited():
-            wait_for = self._secs_until_window_refresh(self.metrics.tok_ts, is_pair=True)
-            self.logger.warning(f"TPM cap reached. Sleeping {wait_for:.2f}s (sync).")
-            time.sleep(wait_for)
+            waited = True
+            loop_count += 1
+
+            wait_for_s = self._secs_until_window_refresh(self.metrics.tok_ts, is_pair=True)
+            wait_ms = int(wait_for_s * 1000)
+            total_waited_ms += wait_ms
+
+            self.logger.warning(
+                f"TPM cap reached. Sleeping {wait_for_s:.2f}s ({wait_ms} ms), loop #{loop_count}."
+            )
+            await asyncio.sleep(wait_for_s)
+
+        return waited, loop_count, total_waited_ms
+
+
+    def _wait_if_token_limited_sync(self) -> Tuple[bool, int, int]:
+        """
+        If TPM limit is reached, sleeps until the window refreshes.
+        Returns:
+        waited (bool)         – True if any sleep occurred  
+        loop_count (int)      – how many times we looped/slept  
+        total_waited_ms (int) – cumulative milliseconds spent sleeping  
+        """
+        waited = False
+        loop_count = 0
+        total_waited_ms = 0
+
+        while self.metrics.is_tpm_limited():
+            waited = True
+            loop_count += 1
+
+            wait_for_s = self._secs_until_window_refresh(self.metrics.tok_ts, is_pair=True)
+            wait_ms = int(wait_for_s * 1000)
+            total_waited_ms += wait_ms
+
+            self.logger.warning(
+                f"TPM cap reached. Sleeping {wait_for_s:.2f}s ({wait_ms} ms), loop #{loop_count}."
+            )
+            time.sleep(wait_for_s)
+
+        return waited, loop_count, total_waited_ms
+
+  
 
     # helper
     def _secs_until_window_refresh(self, dq: deque, *, is_pair=False) -> float:
@@ -145,17 +240,60 @@ class BaseLLMService(ABC):
         generation_request: GenerationRequest,
         operation_name: Optional[str] = None
     ) -> GenerationResult:
+        
+       
+         # 1) Take a “before” snapshot of RPM/TPM
+        rpm_before = None
+        tpm_before = None
+        rpm_after = None
+        tpm_after = None
+        # rpm_before = self.get_current_rpm()
+       
+        try:
+            rpm_before = self.get_current_rpm()
+            tpm_before = self.get_current_tpm()
+        except Exception:
+            # If metrics object isn’t set up yet, default to None
+            rpm_before = None
+            tpm_before = None
+
+        
+
 
         generation_request.operation_name = operation_name or generation_request.operation_name
         generation_request.request_id     = generation_request.request_id or self._generate_request_id()
 
-        self._wait_if_rate_limited_sync()
-        self._wait_if_token_limited_sync()
-       
-        # self.metrics.mark_sent()        
-        self.metrics.mark_sent(generation_request.request_id)                              #
+        waited, loop_count, total_waited_ms =self._wait_if_rate_limited_sync()
+        waited2, loop_count2, total_waited_ms2= self._wait_if_token_limited_sync()
 
+
+        
+        # self.metrics.mark_sent()        
+        self.metrics.mark_sent(generation_request.request_id)      
+        
+        
+    
+        
         result = self.generation_engine.generate_output(generation_request)
+
+        
+        
+        # 4) Immediately after the invoke returns, take an “after” snapshot:
+       
+        try:
+            rpm_after = self.get_current_rpm()
+            tpm_after = self.get_current_tpm()
+        except Exception:
+            rpm_after = None
+            tpm_after = None
+
+        result.rpm_at_the_end= rpm_after
+        result.rpm_at_the_beginning= rpm_before
+        result.tpm_at_the_end= tpm_after
+        result.tpm_at_the_beginning= tpm_before
+
+        
+
         self._after_response(result)
         return result
 
@@ -168,8 +306,8 @@ class BaseLLMService(ABC):
         generation_request.operation_name = operation_name or generation_request.operation_name
         generation_request.request_id     = generation_request.request_id or self._generate_request_id()
 
-        await self._wait_if_rate_limited()
-        await self._wait_if_token_limited()
+        await self._wait_if_rate_limited_async()
+        await self._wait_if_token_limited_async()
       
        
         # self.metrics.mark_sent()                             # ← SENT
@@ -185,8 +323,8 @@ class BaseLLMService(ABC):
     # ------------------------------------------------------------------ #
     def _after_response(self, generation_result: GenerationResult) -> None:
         # ---- metrics ----
-        tokens = generation_result.meta.get("total_tokens", 0)
-        cost   = generation_result.meta.get("total_cost",   0.0)
+        tokens = generation_result.usage.get("total_tokens", 0)
+        cost   = generation_result.usage.get("total_cost",   0.0)
 
         # ------------ atomic metrics update ------------
         # with self._metrics_lock:
@@ -198,14 +336,14 @@ class BaseLLMService(ABC):
         
         # ---- aggregate per-operation usage ----
         op_name = generation_result.operation_name or "unknown_operation"
-        self.usage_stats.update(generation_result.meta, op_name)
+        self.usage_stats.update(generation_result.usage, op_name)
 
         # ---- optional verbose log ----
         if self.show_logs:
             self.logger.info(
                 f"Op:{op_name} ReqID:{generation_result.request_id} "
-                f"InTok:{generation_result.meta.get('input_tokens',0)} "
-                f"OutTok:{generation_result.meta.get('output_tokens',0)} "
+                f"InTok:{generation_result.usage.get('input_tokens',0)} "
+                f"OutTok:{generation_result.usage.get('output_tokens',0)} "
                 f"Cost:${cost:.5f}"
             )
 
@@ -278,3 +416,64 @@ class BaseLLMService(ABC):
         """Tokens-per-minute (received)."""
         return self.metrics.tpm()
 
+
+
+# Main function for testing
+def main():
+    class MyLLMService(BaseLLMService):
+    
+        def ask_llm_to_tell_capital(self,user_input: str,) -> GenerationResult:
+            
+            prompt= f"bring me the capital of this country: {user_input}"
+            generation_request = GenerationRequest(
+                formatted_prompt=prompt,
+                model="gpt-4o",  
+            )
+            generation_result = self.execute_generation(generation_request)
+            return generation_result
+        
+        
+        def bring_only_capital(self,user_input: str,) -> GenerationResult:
+
+
+            prompt= f"bring me the capital of this {user_input}"
+        
+            
+            pipeline_config = [
+                {
+                    'type': 'SemanticIsolation',   # uses LLMs to isolate specific part of the answer.
+                    'params': {
+                        'semantic_element_for_extraction': 'just the capital'
+                    }
+                }
+            
+
+            ]
+            generation_request = GenerationRequest(
+            
+                formatted_prompt=prompt,
+                model="gpt-4o-mini",  # Use the model specified in __init__
+                pipeline_config=pipeline_config,
+            
+            )
+
+            # Execute the generation synchronously
+            generation_result = self.execute_generation(generation_request)
+            return generation_result
+
+
+    llmservice= MyLLMService()
+    our_input= "Turkey"
+
+    generation_result =llmservice.ask_llm_to_tell_capital(our_input)
+    print(generation_result)
+
+
+
+
+
+
+
+
+if __name__ == '__main__':
+    main()

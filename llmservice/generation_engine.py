@@ -1,5 +1,7 @@
 # generation_engine.py
 
+# to run python -m llmservice.generation_engine
+
 import logging
 import time
 from typing import Optional, Dict, Any, List, Union
@@ -13,30 +15,11 @@ from langchain_core.prompts import PromptTemplate
 from langchain_core.prompts.string import get_template_variables
 
 from .schemas import GenerationRequest, GenerationResult,  PipelineStepResult
+from .schemas import EventTimestamps
+from .utils import _now_dt
 
 
 logger = logging.getLogger(__name__)
-
-
-
-gpt_models_cost = {
-    'gpt-4o-search-preview':    {'input_token_cost': 2.5e-6,  'output_token_cost': 10e-6},
-    'gpt-4o-mini-search-preview': {'input_token_cost': 2.5e-6,  'output_token_cost': 0.6e-6},
-    'gpt-4.5-preview':          {'input_token_cost': 75e-6,   'output_token_cost': 150e-6},
-    'gpt-4.1-nano':             {'input_token_cost': 0.1e-6,  'output_token_cost': 0.4e-6},
-    'gpt-4.1-mini':             {'input_token_cost': 0.4e-6,  'output_token_cost': 1.6e-6},
-    'gpt-4.1':                  {'input_token_cost': 2e-6,    'output_token_cost': 8e-6},
-    'gpt-4o':                   {'input_token_cost': 2.5e-6,  'output_token_cost': 10e-6},
-    'gpt-4o-audio-preview':     {'input_token_cost': 2.5e-6,  'output_token_cost': 10e-6},
-    'gpt-4o-mini':              {'input_token_cost': 0.15e-6, 'output_token_cost': 0.6e-6, },
-    'o1':                       {'input_token_cost': 15e-6,   'output_token_cost': 60e-6},
-    'o1-pro':                   {'input_token_cost': 150e-6,  'output_token_cost': 600e-6},
-    'o3':                       {'input_token_cost': 10e-6,   'output_token_cost': 40e-6},
-    'o4-mini':                  {'input_token_cost': 1.1e-6,  'output_token_cost': 4.4e-6},
-}
-
-# Costs per model (example values, adjust as needed)
-
 
 
 class GenerationEngine:
@@ -88,160 +71,178 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         unformatted_prompt = self.proteas.craft(units=order, placeholder_dict=placeholder_dict)
         return unformatted_prompt
     
-    def cost_calculator(self, input_token, output_token, model_name):
-        """
-        Calculate input/output costs based on the gpt_models_cost dict.
+    # def cost_calculator(self, input_token, output_token, model_name):
+    #     """
+    #     Calculate input/output costs based on the gpt_models_cost dict.
 
-        :param input_token: number of input tokens (int or numeric str)
-        :param output_token: number of output tokens (int or numeric str)
-        :param model_name: model key in gpt_models_cost
-        :return: (input_cost, output_cost)
-        """
-        # Ensure the model exists
-        info = gpt_models_cost.get(model_name)
-        if info is None:
-            self.logger.error(f"cost_calculator error: Unsupported model name: {model_name}")
-            raise ValueError(f"cost_calculator error: Unsupported model name: {model_name}")
+    #     :param input_token: number of input tokens (int or numeric str)
+    #     :param output_token: number of output tokens (int or numeric str)
+    #     :param model_name: model key in gpt_models_cost
+    #     :return: (input_cost, output_cost)
+    #     """
+    #     # Ensure the model exists
+    #     info = gpt_models_cost.get(model_name)
+    #     if info is None:
+    #         self.logger.error(f"cost_calculator error: Unsupported model name: {model_name}")
+    #         raise ValueError(f"cost_calculator error: Unsupported model name: {model_name}")
         
-        # Parse token counts
-        itoks = int(input_token)
-        otoks = int(output_token)
+    #     # Parse token counts
+    #     itoks = int(input_token)
+    #     otoks = int(output_token)
 
-        # Multiply by per-token rates
-        inp_rate = info['input_token_cost']
-        out_rate = info['output_token_cost']
-        input_cost  = inp_rate  * itoks
-        output_cost = out_rate * otoks
+    #     # Multiply by per-token rates
+    #     inp_rate = info['input_token_cost']
+    #     out_rate = info['output_token_cost']
+    #     input_cost  = inp_rate  * itoks
+    #     output_cost = out_rate * otoks
 
-        return input_cost, output_cost
+    #     return input_cost, output_cost
     
-    async def generate_output_async(
+    
+
+
+    async def generate_async(
         self,
-        generation_request: GenerationRequest
+        formatted_prompt: Optional[str] = None,
+        unformatted_template: Optional[str] = None,
+        data_for_placeholders: Optional[Dict[str, Any]] = None,
+        model_name: Optional[str] = None,
+        request_id: Optional[Union[str, int]] = None,
+        operation_name: Optional[str] = None
     ) -> GenerationResult:
-        """
-        Asynchronously generates the output and processes post‐processing,
-        mirroring the logic of generate_output but using LLMHandler.invoke_async.
-        """
-        trace_id = self._new_trace_id()     
-        # Unpack request
-        placeholders        = generation_request.data_for_placeholders
-        unformatted_prompt  = generation_request.unformatted_prompt
-        formatted_prompt    = generation_request.formatted_prompt
-        model_name          = generation_request.model or self.llm_handler.model_name
-        operation_name      = generation_request.operation_name
+        trace_id = self._new_trace_id()
 
-        # Prepare formatted prompt
-        if formatted_prompt:
-            prompt_to_send = formatted_prompt
+        # (same placeholder logic as above…)
+        has_formatted   = formatted_prompt is not None
+        has_unformatted = unformatted_template is not None and data_for_placeholders is not None
+        if has_formatted and has_unformatted:
+            raise ValueError("Provide either `formatted_prompt` or (`unformatted_template` + `data_for_placeholders`), not both.")
+        if not (has_formatted or has_unformatted):
+            raise ValueError("You must supply either a fully formatted prompt or both an unformatted template and placeholders.")
+
+        if has_formatted:
+            prompt_to_send = formatted_prompt  # type: ignore
         else:
-            # Validate placeholders
-            existing = get_template_variables(unformatted_prompt, "f-string")
-            missing  = set(existing) - set(placeholders or {})
+            existing_placeholders = get_template_variables(unformatted_template, "f-string")  # type: ignore
+            missing = set(existing_placeholders) - set(data_for_placeholders.keys())  # type: ignore
             if missing:
-                raise ValueError(f"Missing placeholders for async prompt: {missing}")
-            tmpl = PromptTemplate.from_template(unformatted_prompt)
-            prompt_to_send = tmpl.format(**placeholders)  # type: ignore
+                raise ValueError(f"Missing data for placeholders: {missing}")
+            tmpl = PromptTemplate.from_template(unformatted_template)  # type: ignore
+            prompt_to_send = tmpl.format(**data_for_placeholders)  # type: ignore
 
-        # Initialize metadata
         meta = {
             "input_tokens": 0,
             "output_tokens": 0,
             "total_tokens": 0,
             "elapsed_time_for_invoke": 0,
-            "input_cost": 0.0,
-            "output_cost": 0.0,
-            "total_cost": 0.0,
+            "input_cost": 0,
+            "output_cost": 0,
+            "total_cost": 0,
         }
-
-        # Invoke LLM asynchronously
         t1 = time.time()
-        try:
-            r, success = await self.llm_handler.invoke_async(prompt=prompt_to_send)
-        except Exception as e:
-            return GenerationResult(
-                success=False,
-                trace_id=trace_id,              
-                meta=meta,
-                raw_content=None,
-                content=None,
-                elapsed_time=time.time() - t1,
-                error_message=str(e),
-                model=model_name,
-                formatted_prompt=prompt_to_send,
-                unformatted_prompt=unformatted_prompt,
-                request_id=generation_request.request_id,
-                operation_name=operation_name,
-            )
+
+        # now call invoke_async()
+        invoke_data = await self.llm_handler.invoke_async(prompt_to_send)
+        response      = invoke_data.response
+        success       = invoke_data.success
+        attempts      = invoke_data.attempts
+        meta          = invoke_data.usage
+        
         t2 = time.time()
         meta["elapsed_time_for_invoke"] = t2 - t1
 
         if not success:
             return GenerationResult(
                 success=False,
-                trace_id=trace_id,           
+                trace_id=trace_id,
                 meta=meta,
                 raw_content=None,
                 content=None,
                 elapsed_time=meta["elapsed_time_for_invoke"],
                 error_message="LLM invocation failed",
-                model=model_name,
+                model=model_name or self.llm_handler.model_name,
                 formatted_prompt=prompt_to_send,
-                unformatted_prompt=unformatted_prompt,
-                request_id=generation_request.request_id,
-                operation_name=operation_name,
+                unformatted_prompt=unformatted_template,
+                request_id=request_id,
+                operation_name=operation_name
             )
 
-        # Populate token usage and cost if OpenAI model
         if self.llm_handler.OPENAI_MODEL:
             try:
-                meta["input_tokens"]  = r.usage_metadata["input_tokens"]
-                meta["output_tokens"] = r.usage_metadata["output_tokens"]
-                meta["total_tokens"]  = r.usage_metadata["total_tokens"]
+                meta["input_tokens"]  = response.usage_metadata["input_tokens"]
+                meta["output_tokens"] = response.usage_metadata["output_tokens"]
+                meta["total_tokens"]  = response.usage_metadata["total_tokens"]
             except KeyError:
                 return GenerationResult(
                     success=False,
-                     trace_id=trace_id,      
+                    trace_id=trace_id,
                     meta=meta,
                     raw_content=None,
                     content=None,
                     elapsed_time=meta["elapsed_time_for_invoke"],
                     error_message="Token usage metadata missing",
-                    model=model_name,
+                    model=model_name or self.llm_handler.model_name,
                     formatted_prompt=prompt_to_send,
-                    unformatted_prompt=unformatted_prompt,
-                    request_id=generation_request.request_id,
-                    operation_name=operation_name,
+                    unformatted_prompt=unformatted_template,
+                    request_id=request_id,
+                    operation_name=operation_name
                 )
-            inp_cost, out_cost = self.cost_calculator(
-                meta["input_tokens"], meta["output_tokens"], model_name
-            )
-            meta["input_cost"]  = inp_cost
-            meta["output_cost"] = out_cost
-            meta["total_cost"]  = inp_cost + out_cost
+            # in_cost, out_cost = self.cost_calculator(
+            #     meta["input_tokens"], meta["output_tokens"], model_name or self.llm_handler.model_name
+            # )
+            # meta["input_cost"]  = in_cost
+            # meta["output_cost"] = out_cost
+            # meta["total_cost"]  = in_cost + out_cost
 
-        # Build initial GenerationResult
-        generation_result = GenerationResult(
+        gen_result = GenerationResult(
             success=True,
-             trace_id=trace_id,      
+            trace_id=trace_id,
             meta=meta,
-            raw_content=r.content,
+            raw_content=response.content,
             content=None,
             elapsed_time=meta["elapsed_time_for_invoke"],
             error_message=None,
-            model=model_name,
+            model=model_name or self.llm_handler.model_name,
             formatted_prompt=prompt_to_send,
-            unformatted_prompt=unformatted_prompt,
-            request_id=generation_request.request_id,
-            operation_name=operation_name,
+            unformatted_prompt=unformatted_template,
+            request_id=request_id,
+            operation_name=operation_name
         )
 
-        # Apply post-processing pipeline if configured
+        return gen_result
+
+
+    async def generate_output_async(self, generation_request: GenerationRequest) -> GenerationResult:
+        placeholders        = generation_request.data_for_placeholders
+        unformatted_prompt  = generation_request.unformatted_prompt
+        formatted_prompt    = generation_request.formatted_prompt
+        model_name          = generation_request.model or self.llm_handler.model_name
+        operation_name      = generation_request.operation_name
+        
+        # 1) call the core “generate_async”
+        generation_result = await self.generate_async(
+            formatted_prompt      = formatted_prompt,
+            unformatted_template  = unformatted_prompt,
+            data_for_placeholders = placeholders,
+            model_name            = model_name,
+            request_id            = generation_request.request_id,
+            operation_name        = operation_name
+        )
+
+        generation_result.generation_request = generation_request
+
+        if not generation_result.success:
+            return generation_result
+
+        # 2) run any post-processing pipeline
         if generation_request.pipeline_config:
-            return self.execute_pipeline(generation_result, generation_request.pipeline_config)
+            generation_result = self.execute_pipeline(
+                generation_result, generation_request.pipeline_config
+            )
         else:
             generation_result.content = generation_result.raw_content
-            return generation_result
+
+        return generation_result
 
  
 
@@ -252,6 +253,10 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         :param generation_request: GenerationRequest object containing all necessary data.
         :return: GenerationResult object with the output and metadata.
         """
+        generation_requested_at= _now_dt()
+        
+
+
         # Unpack the GenerationRequest
         placeholders = generation_request.data_for_placeholders
         unformatted_prompt = generation_request.unformatted_prompt
@@ -267,6 +272,12 @@ Provide the answer strictly in the following JSON format, do not combine anythin
             operation_name=generation_request.operation_name
         )
 
+        
+        
+
+        
+        generation_result.timestamps.generation_requested_at= generation_requested_at
+
         generation_result.generation_request=generation_request
 
         if not generation_result.success:
@@ -275,9 +286,16 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         # Process the output using the pipeline
         if generation_request.pipeline_config:
             generation_result = self.execute_pipeline(generation_result, generation_request.pipeline_config)
+
+            generation_result.timestamps.postprocessing_completed_at= _now_dt()
         else:
             # No postprocessing; assign raw_content to content
             generation_result.content = generation_result.raw_content
+        
+        generation_result.timestamps.generation_completed_at= _now_dt()
+       
+
+       
 
         return generation_result
 
@@ -388,7 +406,7 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         if key not in content:
             raise KeyError(f"Key '{key}' not found in content.")
         return content[key]
-
+    
     # todo add model param for semanticisolation
     def process_stringmatchvalidation(self, content: str, expected_string: str) -> str:
         """
@@ -415,6 +433,56 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         except json.JSONDecodeError as e:
             raise ValueError(f"JSON loading failed: {e}")
         
+
+
+    def handle_prompt_input_logic(
+        self,
+        formatted_prompt: Optional[str],
+        unformatted_template: Optional[str],
+        data_for_placeholders: Optional[Dict[str, Any]]
+    ) -> str:
+        """
+        Ensures exactly one of `formatted_prompt` or (`unformatted_template` + `data_for_placeholders`)
+        is provided. If `formatted_prompt` is non‐None, returns it directly. Otherwise, it
+        checks that `unformatted_template` and `data_for_placeholders` are both non‐None,
+        verifies that no placeholders are missing, and returns the fully‐formatted prompt.
+
+        Raises:
+            ValueError if both methods of supplying a prompt are used, or if neither is used,
+            or if any placeholders are missing.
+        """
+        has_formatted = (formatted_prompt is not None)
+        has_unformatted = (
+            unformatted_template is not None
+            and data_for_placeholders is not None
+        )
+
+        # 1) Exactly one of the two modes must be used
+        if has_formatted and has_unformatted:
+            raise ValueError(
+                "Provide either `formatted_prompt` or "
+                "(`unformatted_template` + `data_for_placeholders`), not both."
+            )
+        if not (has_formatted or has_unformatted):
+            raise ValueError(
+                "You must supply either `formatted_prompt` or both "
+                "`unformatted_template` and `data_for_placeholders`."
+            )
+
+        # 2) If the caller already gave us a fully formatted prompt, just use it
+        if has_formatted:
+            return formatted_prompt  # type: ignore
+
+        # 3) Otherwise, we have an unformatted template + placeholders. Check for missing keys.
+        existing_placeholders = get_template_variables(unformatted_template, "f-string")  # type: ignore
+        missing = set(existing_placeholders) - set(data_for_placeholders.keys())  # type: ignore
+        if missing:
+            raise ValueError(f"Missing data for placeholders: {missing}")
+
+        # 4) Format and return
+        tmpl = PromptTemplate.from_template(unformatted_template)  # type: ignore
+        return tmpl.format(**data_for_placeholders)  # type: ignore
+        
     
     def generate(
         self,
@@ -437,225 +505,87 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         :return: GenerationResult object.
         """
         # Enforce either-or contract
-
+        
         trace_id = self._new_trace_id() 
-        has_formatted = formatted_prompt is not None
-        has_unformatted = unformatted_template is not None and data_for_placeholders is not None
-        if has_formatted and has_unformatted:
-            raise ValueError(
-                "Provide either `formatted_prompt` or (`unformatted_template` + `data_for_placeholders`), not both."
-            )
-        if not (has_formatted or has_unformatted):
-            raise ValueError(
-                "You must supply either `formatted_prompt` or both `unformatted_template` and `data_for_placeholders`."
-            )
 
-        meta = {  # usage & cost metadata
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "total_tokens": 0,
-            "elapsed_time_for_invoke": 0,
-            "input_cost": 0,
-            "output_cost": 0,
-            "total_cost": 0,
-        }
 
-        # Determine final prompt
-        if has_formatted:
-            prompt_to_send = formatted_prompt  # type: ignore
-        else:
-            existing_placeholders = get_template_variables(unformatted_template, "f-string")  # type: ignore
-            missing = set(existing_placeholders) - set(data_for_placeholders.keys())  # type: ignore
-            if missing:
-                raise ValueError(f"Missing data for placeholders: {missing}")
-            tmpl = PromptTemplate.from_template(unformatted_template)  # type: ignore
-            prompt_to_send = tmpl.format(**data_for_placeholders)  # type: ignore
+        # # 1) Take a “before” snapshot of RPM/TPM
+        # rpm_before = None
+        # tpm_before = None
+        # try:
+        #     rpm_before = self.metrics.current_rpm()
+        #     tpm_before = self.metrics.current_tpm()
+        # except Exception:
+        #     # If metrics object isn’t set up yet, default to None
+        #     rpm_before = None
+        #     tpm_before = None
 
-        # Invoke LLM
-        t1 = time.time()
+        
+
+        prompt_to_send =self.handle_prompt_input_logic(formatted_prompt, unformatted_template, data_for_placeholders)
+
+
         llm_handler = LLMHandler(model_name=model_name or self.llm_handler.model_name, logger=self.logger)
         
         invoke_response_data= llm_handler.invoke(prompt=prompt_to_send)
-        r=invoke_response_data.response
-        attempts=invoke_response_data.attempts
-       
-        t2 = time.time()
-        elapsed = t2 - t1
-        meta["elapsed_time_for_invoke"] = elapsed
 
-        if not  invoke_response_data.success:
+
+        r=        invoke_response_data.response
+        attempts= invoke_response_data.attempts
+        success=  invoke_response_data.success
+        usage          = invoke_response_data.usage
+        
+        total_invoke_duration_ms= invoke_response_data.total_duration_ms
+        
+        total_backoff_ms=         invoke_response_data.total_backoff_ms
+        last_error_message=       invoke_response_data.last_error_message
+        retried=                  invoke_response_data.retried
+        attempt_count =          invoke_response_data.attempt_count
+
+    
+
+        if not  success:
             return GenerationResult(
                 success=False,
                 trace_id=trace_id,      
-                meta=meta,
+                usage=usage,
                 raw_content=None,
                 content=None,
-                elapsed_time=elapsed,
-                error_message="LLM invocation failed",
+                retried= retried, 
+                attempt_count= attempt_count,
+                total_invoke_duration_ms= total_invoke_duration_ms, 
+                total_backoff_ms=total_backoff_ms, 
+                error_message=last_error_message,
                 model=llm_handler.model_name,
                 formatted_prompt=prompt_to_send,
                 unformatted_prompt=unformatted_template,
                 request_id=request_id,
-                operation_name=operation_name
+                operation_name=operation_name, 
+                timestamps= EventTimestamps( attempts= attempts )
             )
-
-        if llm_handler.OPENAI_MODEL:
-            try:
-                meta["input_tokens"] = r.usage_metadata["input_tokens"]
-                meta["output_tokens"] = r.usage_metadata["output_tokens"]
-                meta["total_tokens"] = r.usage_metadata["total_tokens"]
-            except KeyError:
-                return GenerationResult(
-                    success=False,
-                     trace_id=trace_id,      
-                    meta=meta,
-                    raw_content=None,
-                    content=None,
-                    elapsed_time=elapsed,
-                    error_message="Token usage metadata missing",
-                    model=llm_handler.model_name,
-                    formatted_prompt=prompt_to_send,
-                    unformatted_prompt=unformatted_template,
-                    request_id=request_id,
-                    operation_name=operation_name
-                )
-            in_cost, out_cost = self.cost_calculator(
-                meta["input_tokens"], meta["output_tokens"], llm_handler.model_name
-            )
-            meta["input_cost"] = in_cost
-            meta["output_cost"] = out_cost
-            meta["total_cost"] = in_cost + out_cost
 
         return GenerationResult(
             success=True,
-             trace_id=trace_id,      
-            meta=meta,
+            trace_id=trace_id,    
+            usage=usage,
             raw_content=r.content,
             content=None,
-            elapsed_time=elapsed,
-            error_message=None,
+
+            retried= retried, 
+            attempt_count= attempt_count,
+            total_invoke_duration_ms= total_invoke_duration_ms, 
+            total_backoff_ms=total_backoff_ms, 
+            error_message=last_error_message,
+
             model=llm_handler.model_name,
             formatted_prompt=prompt_to_send,
             unformatted_prompt=unformatted_template,
             request_id=request_id,
-            operation_name=operation_name
+            operation_name=operation_name, 
+            timestamps=  EventTimestamps( attempts= attempts )
         )
 
-    # # Implement the generate method
-    # def generate(
-    #     self,
-    #     formatted_prompt: Optional[str] = None,
-    #     unformatted_template: Optional[str] = None,
-    #     data_for_placeholders: Optional[Dict[str, Any]] = None,
-    #     model_name: Optional[str] = None,
-    #     request_id: Optional[Union[str, int]] = None,
-    #     operation_name: Optional[str] = None
-    # ) -> GenerationResult:
-    # #def generate(self, unformatted_template, data_for_placeholders, model_name=None, request_id=None, operation_name=None) -> GenerationResult:
-    #     """
-    #     Generates content using the LLMHandler.
-
-    #     :param unformatted_template: The unformatted prompt template.
-    #     :param data_for_placeholders: Data to fill the placeholders.
-    #     :param model_name: Model name to use.
-    #     :param request_id: Optional request ID.
-    #     :param operation_name: Optional operation name.
-    #     :return: GenerationResult object.
-    #     """
-    #     meta = {
-    #         "input_tokens": 0,
-    #         "output_tokens": 0,
-    #         "total_tokens": 0,
-    #         "elapsed_time_for_invoke": 0,
-    #         "input_cost": 0,
-    #         "output_cost": 0,
-    #         "total_cost": 0,
-    #     }
-
-    #     t0 = time.time()
-
-    #     if formatted_prompt is not None:
-    #         prompt_to_send = formatted_prompt
-    #     else:
-
     
-    #         # Validate placeholders
-    #         existing_placeholders = get_template_variables(unformatted_template, "f-string")
-    #         missing_placeholders = set(existing_placeholders) - set(data_for_placeholders.keys())
-
-    #         if missing_placeholders:
-    #             raise ValueError(f"Missing data for placeholders: {missing_placeholders}")
-
-    #         # Format the prompt
-    #         prompt_template = PromptTemplate.from_template(unformatted_template)
-    #         prompt_to_send = prompt_template.format(**data_for_placeholders)
-
-    #     t1 = time.time()
-
-    #     # Initialize LLMHandler with the model_name
-    #     llm_handler = LLMHandler(model_name=model_name or self.llm_handler.model_name, logger=self.logger)
-
-    #     # Invoke the LLM synchronously
-    #     r, success = llm_handler.invoke(prompt=prompt_to_send)
-
-    #     if not success:
-    #         return GenerationResult(
-    #             success=False,
-    #             meta=meta,
-    #             raw_content=None,
-    #             content=None,
-    #             elapsed_time=0,
-    #             error_message="LLM invocation failed",
-    #             model=llm_handler.model_name,
-    #             formatted_prompt=prompt_to_send,
-    #             request_id=request_id,
-    #             operation_name=operation_name
-    #         )
-
-    #     t2 = time.time()
-    #     elapsed_time_for_invoke = t2 - t1
-    #     meta["elapsed_time_for_invoke"] = elapsed_time_for_invoke
-
-    #     if llm_handler.OPENAI_MODEL:
-    #         try:
-    #             meta["input_tokens"] = r.usage_metadata["input_tokens"]
-    #             meta["output_tokens"] = r.usage_metadata["output_tokens"]
-    #             meta["total_tokens"] = r.usage_metadata["total_tokens"]
-    #         except KeyError as e:
-    #             return GenerationResult(
-    #                 success=False,
-    #                 meta=meta,
-    #                 raw_content=None,
-    #                 content=None,
-    #                 elapsed_time=elapsed_time_for_invoke,
-    #                 error_message="Token usage metadata missing",
-    #                 model=llm_handler.model_name,
-    #                 formatted_prompt=prompt_to_send,
-    #                 unformatted_prompt=unformatted_template,
-    #                 request_id=request_id,
-    #                 operation_name=operation_name
-    #             )
-
-    #         input_cost, output_cost = self.cost_calculator(
-    #             meta["input_tokens"], meta["output_tokens"], llm_handler.model_name)
-    #         meta["input_cost"] = input_cost
-    #         meta["output_cost"] = output_cost
-    #         meta["total_cost"] = input_cost + output_cost
-
-    #     return GenerationResult(
-    #         success=True,
-    #         meta=meta,
-    #         raw_content=r.content,  # Assign initial LLM output
-    #         content=None,           # Will be assigned after postprocessing
-    #         elapsed_time=elapsed_time_for_invoke,
-    #         error_message=None,
-    #         model=llm_handler.model_name,
-    #         formatted_prompt=prompt_to_send,
-    #         unformatted_prompt=unformatted_template,
-    #         request_id=request_id,
-    #         operation_name=operation_name
-    #     )
-
 # Main function for testing
 def main():
     import logging
@@ -671,8 +601,8 @@ def main():
 
     generation_engine = GenerationEngine(model_name='gpt-4o')
 
-    placeholders = {'input_text': 'Patient shows symptoms of severe headache and nausea.'}
-    unformatted_prompt = 'Provide a summary of the following clinical note: {input_text}'
+    
+    formatted_prompt = 'Provide a summary of the following clinical note: Patient shows symptoms of severe headache and nausea.'
 
     pipeline_config = [
         {
@@ -685,35 +615,16 @@ def main():
     ]
 
     gen_request = GenerationRequest(
-        data_for_placeholders=placeholders,
-        unformatted_prompt=unformatted_prompt,
-        model='gpt-4o',
-        pipeline_config=pipeline_config,
+      
+        formatted_prompt=formatted_prompt,
+       # pipeline_config=pipeline_config,
         request_id=3,
         operation_name='extract_symptoms'
     )
 
     generation_result = generation_engine.generate_output(gen_request)
 
-    if generation_result.success:
-        logger.info("Final Result:")
-        logger.info(generation_result.content)
-        logger.info("Raw LLM Output:")
-        logger.info(generation_result.raw_content)
-    else:
-        logger.info("Error:")
-        logger.info(generation_result.error_message)
-
-    logger.info("Pipeline Steps Results")
-    for step_result in generation_result.pipeline_steps_results:
-        logger.info(f"Step {step_result.step_type}")
-        logger.info(f"Success {step_result.success}")
-
-        if step_result.success:
-            logger.info(f"Content Before: {step_result.content_before}")
-            logger.info(f"Content After: {step_result.content_after}")
-        else:
-            logger.info(f"Error: {step_result.error_message}")
+    print(generation_result)
 
 if __name__ == '__main__':
     main()

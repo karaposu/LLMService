@@ -8,7 +8,7 @@ import logging
 from dotenv import load_dotenv
 from tenacity import retry, stop_after_attempt, wait_random_exponential, retry_if_exception_type, RetryCallState, AsyncRetrying, Retrying
 
-from typing import Any, List, Tuple
+from typing import Any, List, Tuple, Dict
 import httpx
 import asyncio
 from datetime import timedelta
@@ -99,6 +99,30 @@ class LLMHandler:
 
     def change_model(self, model_name):
         self.llm = self._initialize_llm(model_name)
+
+   
+    def _init_meta(self) -> Dict[str, Any]:
+        """
+        Return a fresh metadata dict for token‐usage and cost:
+            {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "elapsed_time_for_invoke": 0,
+                "input_cost": 0,
+                "output_cost": 0,
+                "total_cost": 0,
+            }
+        """
+        return {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "elapsed_time_for_invoke": 0,
+            "input_cost": 0,
+            "output_cost": 0,
+            "total_cost": 0,
+        }
 
     
 
@@ -303,10 +327,29 @@ class LLMHandler:
                         error_message   = None
                     ))
 
+
+        in_cost, out_cost = self.cost_calculator(
+                final_response.usage_metadata["input_tokens"],  final_response.usage_metadata["output_tokens"], self.model_name or self.llm_handler.model_name
+            )
+        
+        total_cost= in_cost+ out_cost
+
+        meta=self._init_meta()
+
+        meta["input_tokens"]  =  final_response.usage_metadata["input_tokens"]
+        meta["output_tokens"] =  final_response.usage_metadata["output_tokens"]
+        meta["total_tokens"]  =  final_response.usage_metadata["output_tokens"] + final_response.usage_metadata["input_tokens"]
+        
+        meta["input_cost"]= in_cost
+        meta["output_cost"]= out_cost
+        meta["total_cost"]= total_cost
+
+        
         return InvokeResponseData(
             success = final_success,
             response = final_response,
-            attempts = attempts
+            attempts = attempts, 
+            usage= meta
         )
     
 
@@ -354,13 +397,33 @@ class LLMHandler:
                         error_message   = None
                     ))
 
+
+        in_cost, out_cost = self.cost_calculator(
+                final_response.usage_metadata["input_tokens"],  final_response.usage_metadata["output_tokens"], self.model_name or self.llm_handler.model_name
+            )
+        
+        total_cost= in_cost+ out_cost
+
+        meta=self._init_meta()
+
+        meta["input_tokens"]  =  final_response.usage_metadata["input_tokens"]
+        meta["output_tokens"] =  final_response.usage_metadata["output_tokens"]
+        meta["total_tokens"]  =  final_response.usage_metadata["output_tokens"] + final_response.usage_metadata["input_tokens"]
+        
+        meta["input_cost"]= in_cost
+        meta["output_cost"]= out_cost
+        meta["total_cost"]= total_cost
+
+        
         return InvokeResponseData(
             success = final_success,
             response = final_response,
-            attempts = attempts
+            attempts = attempts, 
+            usage= meta
         )
+    
 
-   
+       
 
     # def invoke(self, prompt: str) -> InvokeResponseData:
     #     """
@@ -456,6 +519,41 @@ class LLMHandler:
             response=response,
             attempts=attempts
         )
+    
+
+
+    def cost_calculator(self, input_token, output_token, model_name):
+        """
+        Calculate input/output costs based on the gpt_models_cost dict.
+
+        :param input_token: number of input tokens (int or numeric str)
+        :param output_token: number of output tokens (int or numeric str)
+        :param model_name: model key in gpt_models_cost
+        :return: (input_cost, output_cost)
+
+          in_cost, out_cost = self.cost_calculator(
+                meta["input_tokens"], meta["output_tokens"], model_name or self.llm_handler.model_name
+            )
+        """
+        # Ensure the model exists
+        info = gpt_models_cost.get(model_name)
+        if info is None:
+            self.logger.error(f"cost_calculator error: Unsupported model name: {model_name}")
+            raise ValueError(f"cost_calculator error: Unsupported model name: {model_name}")
+        
+        # Parse token counts
+        itoks = int(input_token)
+        otoks = int(output_token)
+
+        # Multiply by per-token rates
+        inp_rate = info['input_token_cost']
+        out_rate = info['output_token_cost']
+        input_cost  = inp_rate  * itoks
+        output_cost = out_rate * otoks
+
+        return input_cost, output_cost
+    
+    
     
 
     def _retry_count_is_max(self, retry_state: RetryCallState) -> bool:
