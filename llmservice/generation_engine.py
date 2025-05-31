@@ -110,114 +110,101 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         request_id: Optional[Union[str, int]] = None,
         operation_name: Optional[str] = None
     ) -> GenerationResult:
+        
+
         trace_id = self._new_trace_id()
 
-        # (same placeholder logic as above…)
-        has_formatted   = formatted_prompt is not None
-        has_unformatted = unformatted_template is not None and data_for_placeholders is not None
-        if has_formatted and has_unformatted:
-            raise ValueError("Provide either `formatted_prompt` or (`unformatted_template` + `data_for_placeholders`), not both.")
-        if not (has_formatted or has_unformatted):
-            raise ValueError("You must supply either a fully formatted prompt or both an unformatted template and placeholders.")
-
-        if has_formatted:
-            prompt_to_send = formatted_prompt  # type: ignore
-        else:
-            existing_placeholders = get_template_variables(unformatted_template, "f-string")  # type: ignore
-            missing = set(existing_placeholders) - set(data_for_placeholders.keys())  # type: ignore
-            if missing:
-                raise ValueError(f"Missing data for placeholders: {missing}")
-            tmpl = PromptTemplate.from_template(unformatted_template)  # type: ignore
-            prompt_to_send = tmpl.format(**data_for_placeholders)  # type: ignore
-
-        meta = {
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "total_tokens": 0,
-            "elapsed_time_for_invoke": 0,
-            "input_cost": 0,
-            "output_cost": 0,
-            "total_cost": 0,
-        }
-        t1 = time.time()
-
-        # now call invoke_async()
-        invoke_data = await self.llm_handler.invoke_async(prompt_to_send)
-        response      = invoke_data.response
-        success       = invoke_data.success
-        attempts      = invoke_data.attempts
-        meta          = invoke_data.usage
+        prompt_to_send =self.handle_prompt_input_logic(formatted_prompt, unformatted_template, data_for_placeholders)
         
-        t2 = time.time()
-        meta["elapsed_time_for_invoke"] = t2 - t1
+        # now call invoke_async()
+        invoke_response_data = await self.llm_handler.invoke_async(prompt_to_send)
+        
+        response      = invoke_response_data.response
+        success       = invoke_response_data.success
+        attempts      = invoke_response_data.attempts
+        usage          = invoke_response_data.usage
+       
+
+        total_invoke_duration_ms= invoke_response_data.total_duration_ms
+        
+        total_backoff_ms=         invoke_response_data.total_backoff_ms
+        last_error_message=       invoke_response_data.last_error_message
+        retried=                  invoke_response_data.retried
+        attempt_count =          invoke_response_data.attempt_count
+
+        
+        
 
         if not success:
             return GenerationResult(
                 success=False,
                 trace_id=trace_id,
-                meta=meta,
+                usage=usage,
                 raw_content=None,
                 content=None,
-                elapsed_time=meta["elapsed_time_for_invoke"],
-                error_message="LLM invocation failed",
+
+                retried= retried, 
+                attempt_count= attempt_count,
+                total_invoke_duration_ms= total_invoke_duration_ms, 
+                total_backoff_ms=total_backoff_ms, 
+                error_message=last_error_message,
+               
+                
                 model=model_name or self.llm_handler.model_name,
                 formatted_prompt=prompt_to_send,
                 unformatted_prompt=unformatted_template,
                 request_id=request_id,
-                operation_name=operation_name
+                operation_name=operation_name,
+                timestamps= EventTimestamps( attempts= attempts )
             )
 
-        if self.llm_handler.OPENAI_MODEL:
-            try:
-                meta["input_tokens"]  = response.usage_metadata["input_tokens"]
-                meta["output_tokens"] = response.usage_metadata["output_tokens"]
-                meta["total_tokens"]  = response.usage_metadata["total_tokens"]
-            except KeyError:
-                return GenerationResult(
-                    success=False,
-                    trace_id=trace_id,
-                    meta=meta,
-                    raw_content=None,
-                    content=None,
-                    elapsed_time=meta["elapsed_time_for_invoke"],
-                    error_message="Token usage metadata missing",
-                    model=model_name or self.llm_handler.model_name,
-                    formatted_prompt=prompt_to_send,
-                    unformatted_prompt=unformatted_template,
-                    request_id=request_id,
-                    operation_name=operation_name
-                )
-            # in_cost, out_cost = self.cost_calculator(
-            #     meta["input_tokens"], meta["output_tokens"], model_name or self.llm_handler.model_name
-            # )
-            # meta["input_cost"]  = in_cost
-            # meta["output_cost"] = out_cost
-            # meta["total_cost"]  = in_cost + out_cost
+        
+            
 
         gen_result = GenerationResult(
             success=True,
             trace_id=trace_id,
-            meta=meta,
+            usage=usage,
             raw_content=response.content,
             content=None,
-            elapsed_time=meta["elapsed_time_for_invoke"],
-            error_message=None,
+            
+            retried= retried, 
+            attempt_count= attempt_count,
+            total_invoke_duration_ms= total_invoke_duration_ms, 
+            total_backoff_ms=total_backoff_ms, 
+            error_message=last_error_message,
+           
+            
             model=model_name or self.llm_handler.model_name,
             formatted_prompt=prompt_to_send,
             unformatted_prompt=unformatted_template,
             request_id=request_id,
-            operation_name=operation_name
+            operation_name=operation_name,
+            timestamps=  EventTimestamps( attempts= attempts )
         )
 
         return gen_result
 
 
-    async def generate_output_async(self, generation_request: GenerationRequest) -> GenerationResult:
+ 
+    async def generate_output_async(
+        self,
+        generation_request: GenerationRequest
+    ) -> GenerationResult:
+        
+        # 1) Record when this generation was requested (wall‐clock UTC)
+        generation_requested_at = _now_dt()
+        
+
+        # Unpack the GenerationRequest
         placeholders        = generation_request.data_for_placeholders
         unformatted_prompt  = generation_request.unformatted_prompt
         formatted_prompt    = generation_request.formatted_prompt
         model_name          = generation_request.model or self.llm_handler.model_name
         operation_name      = generation_request.operation_name
+
+
+         
         
         # 1) call the core “generate_async”
         generation_result = await self.generate_async(
@@ -231,19 +218,32 @@ Provide the answer strictly in the following JSON format, do not combine anythin
 
         generation_result.generation_request = generation_request
 
+
+         # Ensure `timestamps` exists and fill in requested time
+        if generation_result.timestamps is None:
+            generation_result.timestamps = EventTimestamps()
+        generation_result.timestamps.generation_requested_at = generation_requested_at
+
+        
         if not generation_result.success:
             return generation_result
-
-        # 2) run any post-processing pipeline
+        
+        # 5) Run any post‐processing pipeline (if configured)
         if generation_request.pipeline_config:
             generation_result = self.execute_pipeline(
-                generation_result, generation_request.pipeline_config
+                generation_result,
+                generation_request.pipeline_config
             )
+            # After pipeline finishes, record postprocessing completion time
+            generation_result.timestamps.postprocessing_completed_at = _now_dt()
         else:
+            # If no pipeline, just set content = raw_content
             generation_result.content = generation_result.raw_content
 
-        return generation_result
+        # 6) Finally, record when generation fully completed
+        generation_result.timestamps.generation_completed_at = _now_dt()
 
+        return generation_result
  
 
     def generate_output(self, generation_request: GenerationRequest) -> GenerationResult:
@@ -508,20 +508,6 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         
         trace_id = self._new_trace_id() 
 
-
-        # # 1) Take a “before” snapshot of RPM/TPM
-        # rpm_before = None
-        # tpm_before = None
-        # try:
-        #     rpm_before = self.metrics.current_rpm()
-        #     tpm_before = self.metrics.current_tpm()
-        # except Exception:
-        #     # If metrics object isn’t set up yet, default to None
-        #     rpm_before = None
-        #     tpm_before = None
-
-        
-
         prompt_to_send =self.handle_prompt_input_logic(formatted_prompt, unformatted_template, data_for_placeholders)
 
 
@@ -551,11 +537,14 @@ Provide the answer strictly in the following JSON format, do not combine anythin
                 usage=usage,
                 raw_content=None,
                 content=None,
+
                 retried= retried, 
                 attempt_count= attempt_count,
                 total_invoke_duration_ms= total_invoke_duration_ms, 
                 total_backoff_ms=total_backoff_ms, 
                 error_message=last_error_message,
+
+
                 model=llm_handler.model_name,
                 formatted_prompt=prompt_to_send,
                 unformatted_prompt=unformatted_template,

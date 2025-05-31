@@ -282,6 +282,20 @@ class GenerationResult:
     tpm_at_the_beginning: Optional[int] = None
     tpm_at_the_end: Optional[int] = None
 
+
+    # Six new “rate-limit wait” fields
+    rpm_waited: Optional[bool] = None
+    rpm_wait_loops: Optional[int] = None
+    rpm_waited_ms: Optional[int] = None
+    
+    tpm_waited: Optional[bool] = None
+    tpm_wait_loops: Optional[int] = None
+    tpm_waited_ms: Optional[int] = None
+    
+
+
+    
+
     # ← NEW: embed our structured timestamps
 
     timestamps: Optional[EventTimestamps] = None

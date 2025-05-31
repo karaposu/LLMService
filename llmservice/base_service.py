@@ -263,21 +263,24 @@ class BaseLLMService(ABC):
         generation_request.operation_name = operation_name or generation_request.operation_name
         generation_request.request_id     = generation_request.request_id or self._generate_request_id()
 
-        waited, loop_count, total_waited_ms =self._wait_if_rate_limited_sync()
-        waited2, loop_count2, total_waited_ms2= self._wait_if_token_limited_sync()
 
+        # 4) Now we are about to enter any rate‐limit / concurrency waits …
+        #    At this very moment, we consider the request “enqueued.”
+        #    (It may still have to wait on RPM or TPM checks, etc.)
+        generation_enqueued_at = _now_dt()
+
+        rpm_waited, rpm_wait_loops, rpm_waited_ms =self._wait_if_rate_limited_sync()
+        tpm_waited, tpm_wait_loops, tpm_waited_ms= self._wait_if_token_limited_sync()
+
+        
+        # 6) Immediately before calling the LLM, we are “dequeued.” 
+        generation_dequeued_at = _now_dt()
 
         
         # self.metrics.mark_sent()        
         self.metrics.mark_sent(generation_request.request_id)      
         
         result = self.generation_engine.generate_output(generation_request)
-
-        
-        
-        # 4) Immediately after the invoke returns, take an “after” snapshot:
-       
-       
 
         
 
@@ -296,6 +299,19 @@ class BaseLLMService(ABC):
         result.tpm_at_the_end= tpm_after
         result.tpm_at_the_beginning= tpm_before
 
+        
+        result.timestamps.generation_enqueued_at  = generation_enqueued_at
+        result.timestamps.generation_dequeued_at  = generation_dequeued_at
+
+        
+        result.rpm_waited=rpm_waited
+        result.rpm_wait_loops=rpm_wait_loops
+        result.rpm_waited_ms=rpm_waited_ms
+
+        result.tpm_waited=tpm_waited
+        result.tpm_wait_loops=tpm_wait_loops
+        result.tpm_waited_ms=tpm_waited_ms
+
 
         return result
 
@@ -304,13 +320,42 @@ class BaseLLMService(ABC):
         generation_request: GenerationRequest,
         operation_name: Optional[str] = None
     ) -> GenerationResult:
+        
 
+          # 1) Take a “before” snapshot of RPM/TPM
+        rpm_before = None
+        tpm_before = None
+        rpm_after = None
+        tpm_after = None
+        # rpm_before = self.get_current_rpm()
+       
+        try:
+            rpm_before = self.get_current_rpm()
+            tpm_before = self.get_current_tpm()
+        except Exception:
+            # If metrics object isn’t set up yet, default to None
+            rpm_before = None
+            tpm_before = None
+
+        
+        
         generation_request.operation_name = operation_name or generation_request.operation_name
         generation_request.request_id     = generation_request.request_id or self._generate_request_id()
 
-        await self._wait_if_rate_limited_async()
-        await self._wait_if_token_limited_async()
-      
+
+         # 4) We’re about to enter any rate‐limit or concurrency wait → “enqueued”
+        generation_enqueued_at = _now_dt()
+
+        
+
+            # ← use the async wait methods here, not the sync ones
+        rpm_waited, rpm_wait_loops, rpm_waited_ms = await self._wait_if_rate_limited_async()
+        tpm_waited, tpm_wait_loops, tpm_waited_ms = await self._wait_if_token_limited_async()
+
+
+        # 6) Now wait on the concurrency semaphore before calling the LLM
+        generation_dequeued_at = _now_dt()
+
        
         # self.metrics.mark_sent()                             # ← SENT
         self.metrics.mark_sent(generation_request.request_id)  
@@ -318,6 +363,33 @@ class BaseLLMService(ABC):
         async with self.semaphore:
             result = await self.generation_engine.generate_output_async(generation_request)
             self._after_response(result)
+
+
+            try:
+                rpm_after = self.get_current_rpm()
+                tpm_after = self.get_current_tpm()
+            except Exception:
+                rpm_after = None
+                tpm_after = None
+
+            result.rpm_at_the_end= rpm_after
+            result.rpm_at_the_beginning= rpm_before
+            result.tpm_at_the_end= tpm_after
+            result.tpm_at_the_beginning= tpm_before
+
+
+            result.timestamps.generation_enqueued_at  = generation_enqueued_at
+            result.timestamps.generation_dequeued_at  = generation_dequeued_at
+
+            
+            result.rpm_waited=rpm_waited
+            result.rpm_wait_loops=rpm_wait_loops
+            result.rpm_waited_ms=rpm_waited_ms
+
+            result.tpm_waited=tpm_waited
+            result.tpm_wait_loops=tpm_wait_loops
+            result.tpm_waited_ms=tpm_waited_ms
+
             return result
 
     # ------------------------------------------------------------------ #
@@ -408,16 +480,16 @@ class BaseLLMService(ABC):
     # ------------------------------------------------------------------ #
     def get_current_rpm(self) -> float:
         """Requests-per-minute (sent)."""
-        print("--------------------------------------inside get_current_rpm ", self.metrics.rpm())
+       
         return self.metrics.rpm()
-
+    
     def get_current_repmin(self) -> float:
         """Responses-per-minute (received)."""
         return self.metrics.repm()
     
     def get_current_tpm(self) -> float:
         """Tokens-per-minute (received)."""
-        print("--------------------------------------inside get_current_tpm ", self.metrics.tpm())
+        
         return self.metrics.tpm()
 
 
