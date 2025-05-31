@@ -271,15 +271,19 @@ class BaseLLMService(ABC):
         # self.metrics.mark_sent()        
         self.metrics.mark_sent(generation_request.request_id)      
         
-        
-    
-        
         result = self.generation_engine.generate_output(generation_request)
 
         
         
         # 4) Immediately after the invoke returns, take an “after” snapshot:
        
+       
+
+        
+
+        self._after_response(result)
+
+
         try:
             rpm_after = self.get_current_rpm()
             tpm_after = self.get_current_tpm()
@@ -292,9 +296,7 @@ class BaseLLMService(ABC):
         result.tpm_at_the_end= tpm_after
         result.tpm_at_the_beginning= tpm_before
 
-        
 
-        self._after_response(result)
         return result
 
     async def execute_generation_async(
@@ -406,14 +408,16 @@ class BaseLLMService(ABC):
     # ------------------------------------------------------------------ #
     def get_current_rpm(self) -> float:
         """Requests-per-minute (sent)."""
+        print("--------------------------------------inside get_current_rpm ", self.metrics.rpm())
         return self.metrics.rpm()
 
     def get_current_repmin(self) -> float:
         """Responses-per-minute (received)."""
         return self.metrics.repm()
-
+    
     def get_current_tpm(self) -> float:
         """Tokens-per-minute (received)."""
+        print("--------------------------------------inside get_current_tpm ", self.metrics.tpm())
         return self.metrics.tpm()
 
 
