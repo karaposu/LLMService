@@ -14,7 +14,7 @@ from proteas import Proteas  # Ensure this is installed and available
 from langchain_core.prompts import PromptTemplate
 from langchain_core.prompts.string import get_template_variables
 
-from .schemas import GenerationRequest, GenerationResult,  PipelineStepResult
+from .schemas import GenerationRequest, GenerationResult,  PipelineStepResult, BackoffStats
 from .schemas import EventTimestamps
 from .utils import _now_dt
 
@@ -71,33 +71,6 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         unformatted_prompt = self.proteas.craft(units=order, placeholder_dict=placeholder_dict)
         return unformatted_prompt
     
-    # def cost_calculator(self, input_token, output_token, model_name):
-    #     """
-    #     Calculate input/output costs based on the gpt_models_cost dict.
-
-    #     :param input_token: number of input tokens (int or numeric str)
-    #     :param output_token: number of output tokens (int or numeric str)
-    #     :param model_name: model key in gpt_models_cost
-    #     :return: (input_cost, output_cost)
-    #     """
-    #     # Ensure the model exists
-    #     info = gpt_models_cost.get(model_name)
-    #     if info is None:
-    #         self.logger.error(f"cost_calculator error: Unsupported model name: {model_name}")
-    #         raise ValueError(f"cost_calculator error: Unsupported model name: {model_name}")
-        
-    #     # Parse token counts
-    #     itoks = int(input_token)
-    #     otoks = int(output_token)
-
-    #     # Multiply by per-token rates
-    #     inp_rate = info['input_token_cost']
-    #     out_rate = info['output_token_cost']
-    #     input_cost  = inp_rate  * itoks
-    #     output_cost = out_rate * otoks
-
-    #     return input_cost, output_cost
-    
     
 
 
@@ -122,7 +95,9 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         response      = invoke_response_data.response
         success       = invoke_response_data.success
         attempts      = invoke_response_data.attempts
-        usage          = invoke_response_data.usage
+        usage         = invoke_response_data.usage
+        
+        error_type    = invoke_response_data.error_type
        
 
         total_invoke_duration_ms= invoke_response_data.total_duration_ms
@@ -132,8 +107,12 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         retried=                  invoke_response_data.retried
         attempt_count =          invoke_response_data.attempt_count
 
-        
-        
+        actual_retry_loops = max(0, attempt_count - 1)
+        backoff = BackoffStats(
+
+            retry_loops = actual_retry_loops,
+            retry_ms    = total_backoff_ms
+        )
 
         if not success:
             return GenerationResult(
@@ -146,10 +125,10 @@ Provide the answer strictly in the following JSON format, do not combine anythin
                 retried= retried, 
                 attempt_count= attempt_count,
                 total_invoke_duration_ms= total_invoke_duration_ms, 
-                total_backoff_ms=total_backoff_ms, 
+                backoff=backoff, 
+                # total_backoff_ms=total_backoff_ms, 
                 error_message=last_error_message,
                
-                
                 model=model_name or self.llm_handler.model_name,
                 formatted_prompt=prompt_to_send,
                 unformatted_prompt=unformatted_template,
@@ -159,7 +138,6 @@ Provide the answer strictly in the following JSON format, do not combine anythin
             )
 
         
-            
 
         gen_result = GenerationResult(
             success=True,
@@ -171,7 +149,8 @@ Provide the answer strictly in the following JSON format, do not combine anythin
             retried= retried, 
             attempt_count= attempt_count,
             total_invoke_duration_ms= total_invoke_duration_ms, 
-            total_backoff_ms=total_backoff_ms, 
+            backoff=backoff, 
+            # total_backoff_ms=total_backoff_ms, 
             error_message=last_error_message,
            
             
@@ -507,7 +486,7 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         # Enforce either-or contract
         
         trace_id = self._new_trace_id() 
-
+        
         prompt_to_send =self.handle_prompt_input_logic(formatted_prompt, unformatted_template, data_for_placeholders)
 
 
@@ -521,6 +500,8 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         success=  invoke_response_data.success
         usage          = invoke_response_data.usage
         
+        error_type    = invoke_response_data.error_type
+        
         total_invoke_duration_ms= invoke_response_data.total_duration_ms
         
         total_backoff_ms=         invoke_response_data.total_backoff_ms
@@ -528,8 +509,15 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         retried=                  invoke_response_data.retried
         attempt_count =          invoke_response_data.attempt_count
 
-    
+        actual_retry_loops = max(0, attempt_count - 1)
+        backoff = BackoffStats(
+           
+            retry_loops = actual_retry_loops,
+            retry_ms    = total_backoff_ms
+        )
 
+    
+        
         if not  success:
             return GenerationResult(
                 success=False,
@@ -541,7 +529,8 @@ Provide the answer strictly in the following JSON format, do not combine anythin
                 retried= retried, 
                 attempt_count= attempt_count,
                 total_invoke_duration_ms= total_invoke_duration_ms, 
-                total_backoff_ms=total_backoff_ms, 
+                backoff=backoff, 
+                # total_backoff_ms=total_backoff_ms, 
                 error_message=last_error_message,
 
 
@@ -563,7 +552,8 @@ Provide the answer strictly in the following JSON format, do not combine anythin
             retried= retried, 
             attempt_count= attempt_count,
             total_invoke_duration_ms= total_invoke_duration_ms, 
-            total_backoff_ms=total_backoff_ms, 
+            backoff=backoff, 
+         #   total_backoff_ms=total_backoff_ms, 
             error_message=last_error_message,
 
             model=llm_handler.model_name,

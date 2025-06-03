@@ -1,21 +1,62 @@
 # schemas.py
 
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, asdict
 from typing import Any, Dict, Optional, Union, Literal , List
 import pprint
 from datetime import datetime, timezone, timedelta
-
-
-from dataclasses import dataclass, field
-from typing import Any, List, Optional
 import json
+from textwrap import indent
 
+
+HEADER = lambda s: f"\033[1m{s}\033[0m" 
 
 
 def indent_text(text, indent):
     indentation = ' ' * indent
     return '\n'.join(indentation + line for line in text.splitlines())
 
+
+def _pretty(val, *, indent_level: int = 2) -> str:
+    """
+    Pretty-print dicts / lists as JSON; everything else via str().
+    """
+    if isinstance(val, (dict, list)):
+        return indent(json.dumps(val, indent=4, ensure_ascii=False), " " * indent_level)
+    return str(val)
+
+
+
+from enum import Enum
+
+class ErrorType(Enum):
+    UNSUPPORTED_REGION       = "unsupported_region"
+    INSUFFICIENT_QUOTA       = "insufficient_quota"
+    HTTP_429                 = "http_429"
+    UNKNOWN_OPENAI_ERROR     = "unknown_openai_error"
+    NO_INTERNET_ACCESS       = "no_internet_access"
+
+
+
+@dataclass(slots=True)
+class BackoffStats:
+    # ---- client-side gates ----
+    rpm_loops:    int = 0
+    rpm_ms:       int = 0
+    tpm_loops:    int = 0
+    tpm_ms:       int = 0
+
+    # ---- server / retry layer ----
+    retry_loops:  int = 0
+    retry_ms:     int = 0
+
+    # ---------- convenience helpers ----------- #
+    @property
+    def client_ms(self) -> int:
+        return self.rpm_ms + self.tpm_ms
+
+    @property
+    def total_ms(self) -> int:
+        return self.client_ms + self.retry_ms
 
 
 @dataclass
@@ -58,6 +99,8 @@ class InvokeResponseData:
     last_error_message: Optional[str]= field(init=False)
     retried: bool                    = field(init=False)
 
+    error_type: Optional[ErrorType] = None
+
     def __post_init__(self):
         self.attempt_count    = len(self.attempts)
         if self.attempts:
@@ -82,7 +125,7 @@ class EventTimestamps:
     generation_requested_at:      Optional[datetime] = None
     generation_enqueued_at:       Optional[datetime] = None
     generation_dequeued_at:       Optional[datetime] = None
-    attempts:                     List[InvocationAttempt] = field(default_factory=list)
+   
     semanticisolation_start_at:   Optional[datetime] = None
     semanticisolation_end_at:     Optional[datetime] = None
 
@@ -100,6 +143,8 @@ class EventTimestamps:
 
     postprocessing_completed_at:  Optional[datetime] = None
     generation_completed_at:      Optional[datetime] = None
+
+    attempts:                     List[InvocationAttempt] = field(default_factory=list)
 
     def total_duration_ms(self) -> float:
         if self.generation_completed_at:
@@ -173,6 +218,18 @@ class EventTimestamps:
             data["generation_completed_at"] = self.generation_completed_at.isoformat()
 
         return data
+    
+    def __str__(self) -> str:
+        ts_lines: list[str] = []
+        for fld in fields(self):
+            name  = fld.name
+            value = getattr(self, name)
+            if isinstance(value, datetime):
+                # ISO, keep timezone, trim microseconds to 6-digits:
+                ts_lines.append(f"{name}: {value.isoformat()}")
+            elif value:                         # non-empty lists etc.
+                ts_lines.append(f"{name}: {value}")
+        return "\n".join(ts_lines)
 
 
 
@@ -231,23 +288,6 @@ class PipelineStepResult:
 
 
 
-#  return GenerationResult(
-#                 success=False,
-#                 trace_id=trace_id,      
-#                 usage=usage,
-#                 raw_content=None,
-#                 content=None,
-#                 retried= retried, 
-#                 retried_count= retried_count,
-#                 total_invoke_duration_ms= total_invoke_duration_ms, 
-#                 total_backoff_ms=total_backoff_ms, 
-#                 error_message=last_error_message,
-#                 model=llm_handler.model_name,
-#                 formatted_prompt=prompt_to_send,
-#                 unformatted_prompt=unformatted_template,
-#                 request_id=request_id,
-#                 operation_name=operation_name
-#             )
 
 
 @dataclass
@@ -261,11 +301,15 @@ class GenerationResult:
 
     retried:  Optional[Any] = None, 
     attempt_count:  Optional[Any] = None,
-# retried_count
+
     
     total_invoke_duration_ms:  Optional[Any] = None, 
     total_backoff_ms: Optional[Any] = None, 
+    
+    #total_retry_backoff_ms: Optional[Any] = None, 
+    #total_rpm_backoff_ms
 
+    
     operation_name: Optional[str] = None
     usage: Dict[str, Any] = field(default_factory=dict)
     elapsed_time: Optional[float] = None
@@ -276,12 +320,11 @@ class GenerationResult:
     response_type: Optional[str] = None
    
     pipeline_steps_results: List[PipelineStepResult] = field(default_factory=list)
-    generation_request: Optional[GenerationRequest] = None
+    
     rpm_at_the_beginning: Optional[int] = None
     rpm_at_the_end: Optional[int] = None
     tpm_at_the_beginning: Optional[int] = None
     tpm_at_the_end: Optional[int] = None
-
 
     # Six new “rate-limit wait” fields
     rpm_waited: Optional[bool] = None
@@ -291,31 +334,119 @@ class GenerationResult:
     tpm_waited: Optional[bool] = None
     tpm_wait_loops: Optional[int] = None
     tpm_waited_ms: Optional[int] = None
+
+
+    backoff: BackoffStats = field(default_factory=BackoffStats)
     
-
-
-    
-
-    # ← NEW: embed our structured timestamps
 
     timestamps: Optional[EventTimestamps] = None
+   
+    generation_request: Optional[GenerationRequest] = None
+
 
 
     def __str__(self) -> str:
-        lines = []
+        lines: list[str] = []
         for f in fields(self):
-            name = f.name
+            name  = f.name
             value = getattr(self, name)
-            
-            # For dictionaries or lists, pretty‐print JSON style for readability:
+
+            # ---------- pretty-print dicts & lists ----------------------- #
             if isinstance(value, (dict, list)):
-                pretty = json.dumps(value, indent=4)
-                # Indent each line of the JSON by two spaces
+                pretty   = json.dumps(value, indent=4)
                 indented = "\n".join("  " + line for line in pretty.splitlines())
                 lines.append(f"{name}:\n{indented}")
+
+            # ---------- pretty-print EventTimestamps --------------------- #
+            elif isinstance(value, EventTimestamps):
+                ts_str   = str(value)                     # already newline-separated
+                indented = "\n".join("  " + line for line in ts_str.splitlines())
+                lines.append(f"{name}:\n{indented}")
+
+            # ---------- default: show as is ------------------------------ #
             else:
                 lines.append(f"{name}: {value}")
+
         return "\n".join(lines)
+    
+
+    # # ---------- pretty-printer ---------- #
+    # def __str__(self) -> str:
+    #     parts: list[str] = []
+
+    #     # ── quick scalar summary ──────────────────────────────────── #
+    #     summary_fields = (
+    #         "success", "trace_id", "request_id",
+    #         "operation_name", "model", "error_message",
+    #         "total_invoke_duration_ms",
+    #     )
+    #     parts.append(HEADER("▶ Summary"))
+    #     for name in summary_fields:
+    #         val = getattr(self, name, None)
+    #         if val not in (None, [], {}, ""):
+    #             parts.append(f"{name}: {val}")
+
+    #     # ── usage --------------------------------------------------- #
+    #     if self.usage:
+    #         parts.append(HEADER("▶ Usage"))
+    #         parts.append(_pretty(self.usage))
+
+    #     # ── back-off stats ----------------------------------------- #
+    #     # if any(v for v in vars(self.backoff).values()):
+    #     if any(v for v in asdict(self.backoff).values()):
+    #         parts.append(HEADER("▶ Back-off"))
+    #         # for fname, val in vars(self.backoff).items():
+    #         for fname, val in asdict(self.backoff).items():
+    #             parts.append(f"{fname}: {val}")
+    #         parts.append(f"client_ms: {self.backoff.client_ms}")
+    #         parts.append(f"total_ms : {self.backoff.total_ms}")
+
+    #     # ── rate-limit waits --------------------------------------- #
+    #     if self.rpm_wait_loops or self.tpm_wait_loops:
+    #         parts.append(HEADER("▶ Rate-limit waits"))
+    #         parts.append(f"rpm_waited={self.rpm_waited}, loops={self.rpm_wait_loops}, ms={self.rpm_waited_ms}")
+    #         parts.append(f"tpm_waited={self.tpm_waited}, loops={self.tpm_wait_loops}, ms={self.tpm_waited_ms}")
+
+    #     # ── timestamps  -------------------------------------------- #
+    #     if self.timestamps:
+    #         parts.append(HEADER("▶ Timestamps"))
+    #         for tname, tval in vars(self.timestamps).items():
+    #             if tval:
+    #                 parts.append(f"{tname}: {tval}")
+
+    #     # ── pipeline results --------------------------------------- #
+    #     if self.pipeline_steps_results:
+    #         parts.append(HEADER("▶ Pipeline steps"))
+    #         parts.append(_pretty([p.to_dict() for p in self.pipeline_steps_results]))
+
+    #     # ── content ------------------------------------------------- #
+    #     if self.raw_content is not None:
+    #         parts.append(HEADER("▶ Content"))
+    #         parts.append(self.raw_content.strip())
+
+    #     return "\n".join(parts)
+
+
+
+    # def __str__(self) -> str:
+    #     lines = []
+    #     for f in fields(self):
+    #         name = f.name
+    #         value = getattr(self, name)
+            
+    #         # For dictionaries or lists, pretty‐print JSON style for readability:
+    #         if isinstance(value, (dict, list)):
+    #             pretty = json.dumps(value, indent=4)
+    #             # Indent each line of the JSON by two spaces
+    #             indented = "\n".join("  " + line for line in pretty.splitlines())
+    #             lines.append(f"{name}:\n{indented}")
+    #         else:
+    #             lines.append(f"{name}: {value}")
+    #     return "\n".join(lines)
+    
+
+
+
     
     # def __str__(self) -> str:
     #     lines = [

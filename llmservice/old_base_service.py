@@ -1,363 +1,781 @@
-# base_service.py
+# llmservice/base_service.py
+"""
+Core service orchestration + optional live metrics.
 
+The class now relies on `MetricsRecorder` for:
+    • request/response counters
+    • RPM / RePM / TPM
+    • cumulative cost
+"""
+
+ # to run   python -m llmservice.base_service
+
+from __future__ import annotations
+
+import asyncio
+    
 import logging
 import time
-import asyncio
 from abc import ABC
-from typing import Optional, Union
+from collections import deque
+from typing import Optional, Tuple
 
 from llmservice.generation_engine import GenerationEngine, GenerationRequest, GenerationResult
+from llmservice.live_metrics import MetricsRecorder        # ← NEW
 from llmservice.schemas import UsageStats
-from collections import deque
+from .utils import _now_dt
+import uuid, time, asyncio
+
+
 
 
 class BaseLLMService(ABC):
+    # --------------------------------------------------------------------- #
+    #  Construction
+    # --------------------------------------------------------------------- #
+
+    # _rpm_waiters_lock  = asyncio.Lock()
+    # _rpm_waiters_count = 0
+
+    
+
     def __init__(
         self,
+        *,
         logger: Optional[logging.Logger] = None,
         default_model_name: str = "default-model",
         yaml_file_path: Optional[str] = None,
         rpm_window_seconds: int = 60,
-        max_rpm: int = 60,
-        max_tpm: int | None = None,         # ❶  optional cap
-        max_concurrent_requests: int = 5,
+        max_rpm: int = 100,
+        max_tpm: int | None = None,
+        max_concurrent_requests: int = 100,
         default_number_of_retries: int = 2,
         enable_metrics_logging: bool = False,
         metrics_log_interval: float = 0.1,
-        show_logs=False
-    ):
-        """
-        Base class for LLM services.
+        show_logs: bool = False
+    ) -> None:
 
-        :param logger: Optional logger instance.
-        :param default_model_name: Default model name to use.
-        :param yaml_file_path: Path to the YAML file containing prompts.
-        :param rpm_window_seconds: Time window in seconds for RPM calculation.
-        :param max_rpm: Maximum allowed Requests Per Minute.
-        :param max_concurrent_requests: Maximum number of concurrent asynchronous requests.
-        """
-        self.total_requests_sent     = 0
-        self.total_responses_rcv     = 0
+        # ---- core objects ----
+        self.logger         = logger or logging.getLogger(__name__)
+        self.generation_engine = GenerationEngine(model_name=default_model_name)
+        self.usage_stats    = UsageStats(model=default_model_name)
 
-        self.logger = logger or logging.getLogger(__name__)
-        self.generation_engine = GenerationEngine( model_name=default_model_name)
-        self.usage_stats = UsageStats(model=default_model_name)
-        self.request_id_counter = 0
-        self.request_timestamps = deque()
-        self.response_timestamps: deque[float] = deque()
-        self.rpm_window_seconds = rpm_window_seconds
-        self.max_rpm = max_rpm
-        self.max_tpm = max_tpm
-        self.max_concurrent_requests = max_concurrent_requests
-        self.semaphore = asyncio.Semaphore(self.max_concurrent_requests)
+        # ---- metrics ----
+        self.metrics = MetricsRecorder(
+            window=rpm_window_seconds,
+            max_rpm=max_rpm,
+            max_tpm=max_tpm
+        )
 
-        self.default_number_of_retries=default_number_of_retries
-        self.show_logs=show_logs
 
-        # self.token_timestamps = deque() 
-        self.token_timestamps: deque[tuple[float, int]] = deque()    
+       
+   
 
+        self.request_id_counter    = 0
+        self.semaphore             = asyncio.Semaphore(max_concurrent_requests)
+        self.default_number_of_retries = default_number_of_retries
+        self.show_logs             = show_logs
+
+
+
+        self._rpm_waiters_lock       = asyncio.Lock()
+        self._rpm_waiters_count      = 0
+        self._rpm_last_logged_round  = 0
+        self._rpm_sleep_until_ts = 0.0  
+
+
+        # ---- optional background logger ----
         self._metrics_logger = logging.getLogger("llmservice.metrics")
         if enable_metrics_logging:
-            # start the background metrics task
-            #asyncio.create_task(self._log_metrics_loop(metrics_log_interval))   
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
-                loop = asyncio.get_event_loop()  # gets the current (not-yet-running) loop
-            loop.create_task(self._log_metrics_loop(metrics_log_interval)) 
-            # tail -f llm_metrics.log
+                loop = asyncio.get_event_loop()
+            loop.create_task(self._emit_metrics(metrics_log_interval))
 
-
+        # ---- load prompt YAML (optional) ----
         if yaml_file_path:
             self.load_prompts(yaml_file_path)
         else:
             self.logger.warning("No prompts YAML file provided.")
 
-    def _mark_response_received(self):
-        now = time.time()
-        self.total_responses_rcv += 1
-        self.response_timestamps.append(now)
-        cutoff = now - self.rpm_window_seconds
-        while self.response_timestamps and self.response_timestamps[0] < cutoff:
-            self.response_timestamps.popleft()
+    # ------------------------------------------------------------------ #
+    #  Convenience: file logging for metrics
+    # ------------------------------------------------------------------ #
+    # def setup_metrics_log_file(
+    #     self,
+    #     path: str,
+    #     *,
+    #     level: int = logging.INFO,
+    #     fmt: str = "%(asctime)s %(message)s",
+    #     datefmt: str = "%Y-%m-%d %H:%M:%S"
+    # ) -> None:
+    #     handler   = logging.FileHandler(path)
+    #     formatter = logging.Formatter(fmt=fmt, datefmt=datefmt)
+    #     handler.setFormatter(formatter)
 
-    def get_current_repmin(self) -> float:
-        """
-        Responses-per-minute (RePM) over the same sliding window used for RPM.
-        """
-        cutoff = time.time() - self.rpm_window_seconds
-        while self.response_timestamps and self.response_timestamps[0] < cutoff:
-            self.response_timestamps.popleft()
+    #     self._metrics_logger.addHandler(handler)
+    #     self._metrics_logger.setLevel(level)
+    #     self._metrics_logger.propagate = False      # avoid duplicates
 
-        return len(self.response_timestamps) * (60 / self.rpm_window_seconds)
-
-    
-
-
-    # base_service.py  – inside BaseLLMService
-    def _mark_request_sent(self) -> None:
-        """Append send-timestamp and trim old ones for RPM accounting."""
-        now = time.time()
-        self.total_requests_sent += 1
-        self.request_timestamps.append(now)
-        self._clean_old_timestamps()          # reuse the existing cleaner
-
-    def setup_metrics_log_file(
-        self,
-        path: str,
-        level: int = logging.INFO,
-        fmt: str = "%(asctime)s %(message)s",
-        datefmt: str = "%Y-%m-%d %H:%M:%S"
-    ):
-        """
-        Attach a FileHandler to the metrics logger so RPM/TPM/Cost are written to `path`.
-        The default formatter yields:
-        2025-05-25 14:23:01,234 Your log message…
-
-        :param path:         file path to write metrics logs
-        :param level:        logging level for the metrics logger
-        :param fmt:          log message format (uses %(asctime)s and %(message)s)
-        :param datefmt:      timestamp format (strftime style; milliseconds auto-appended)
-        """
-        handler = logging.FileHandler(path)
-        self._metrics_logger.propagate = False
-        # note: Python’s logging will append ",mmm" for milliseconds automatically
-        formatter = logging.Formatter(fmt=fmt, datefmt=datefmt)
-        handler.setFormatter(formatter)
-
-        self._metrics_logger.addHandler(handler)
-        self._metrics_logger.setLevel(level)
-
-    def set_rate_limits(
-            self,
-            *,
-            max_rpm: Optional[int] = None,
-            max_tpm: Optional[int] = None
-        ) -> None:
-            """Configure RPM/TPM caps."""
-            if max_rpm is not None:
-                self.max_rpm = max_rpm
-            if max_tpm is not None:
-                self.max_tpm = max_tpm
-
-    def set_concurrency(self, max_concurrent_requests: int) -> None:
-        """Configure max simultaneous async requests."""
-        self.max_concurrent_requests = max_concurrent_requests
-        self.semaphore = asyncio.Semaphore(max_concurrent_requests)
-
-
-    def _clean_old_token_timestamps(self):
-        now = time.time()
-        self.token_timestamps = deque(
-            (ts, tok) for ts, tok in self.token_timestamps
-            if now - ts <= self.rpm_window_seconds
-        )
-
-    def _wait_if_token_limited_sync(self) -> None:
-        """Block the current thread until TPM drops below max_tpm (sync version)."""
-        if self.max_tpm is None:
-            return  # no TPM cap
-
-        while self.get_current_tpm() >= self.max_tpm:
-            oldest_ts, _ = self.token_timestamps[0]
-            sleep_for = self.rpm_window_seconds - (time.time() - oldest_ts)
-            sleep_for = max(sleep_for, 0)
-            self.logger.warning(
-                f"TPM cap reached ({self.max_tpm}). Sleeping {sleep_for:.2f}s (sync)."
-            )
-            time.sleep(sleep_for)
-            self._clean_old_token_timestamps()
-
-    
-    async def _wait_if_token_limited(self) -> None:
-        """Pause until tokens-per-minute drops below `max_tpm`."""
-        if self.max_tpm is None:
-            return  # TPM throttling disabled
-        
-        while self.get_current_tpm() >= self.max_tpm:
-            oldest_ts, _ = self.token_timestamps[0]
-            sleep_for = self.rpm_window_seconds - (time.time() - oldest_ts)
-            sleep_for = max(sleep_for, 0)
-            self.logger.warning(
-                f"TPM cap reached ({self.max_tpm}). Sleeping {sleep_for:.2f}s."
-            )
-            await asyncio.sleep(sleep_for)
-            self._clean_old_token_timestamps()
-
-    def get_current_tpm(self) -> float:
-        """Sum of tokens in the last RPM window (i.e. TPM)."""
-        self._clean_old_token_timestamps()
-        total = sum(tokens for _, tokens in self.token_timestamps)
-        # scale if window ≠ 60 s
-        return total * (60 / self.rpm_window_seconds)
-    
+    # ------------------------------------------------------------------ #
+    #  ID helpers
+    # ------------------------------------------------------------------ #
     def _generate_request_id(self) -> int:
-        """Generates a unique request ID."""
         self.request_id_counter += 1
         return self.request_id_counter
-    
-    def get_total_cost(self) -> float:
-        """
-        Returns the total cost (in dollars) accumulated across all operations
-        since the last reset.
-        """
-        return self.usage_stats.total_usage.get("total_cost", 0.0)
-    
-    def _store_usage(self, generation_result: GenerationResult) -> None:
-        """
-        Record usage, token counts and cost *after* a response arrives.
-        Assumes `_mark_request_sent()` was already called when the request left.
-        """
-        if not generation_result or not generation_result.meta:
-            return
 
-        # 1) Count the response for RePM / TotalReceived
-        self._mark_response_received()
+    # ------------------------------------------------------------------ #
+    #  Rate-limit waits
+    # ------------------------------------------------------------------ #
 
-        # 2) Aggregate model-usage metadata
-        operation_name = generation_result.operation_name or "unknown_operation"
-        self.usage_stats.update(generation_result.meta, operation_name)
 
-        # 3) Track tokens-per-minute
-        timestamp     = time.time()
-        total_tokens  = generation_result.meta.get("total_tokens", 0)
-        self.token_timestamps.append((timestamp, total_tokens))
-        self._clean_old_token_timestamps()
+    # async def _wait_if_rate_limited_async(self) -> Tuple[bool, int, int]:
+    #     """
+    #     If RPM limit is reached, sleeps until the window refreshes.
+    #     Returns:
+    #       waited       (bool) – True if any sleep occurred
+    #       loop_count   (int)  – how many times we looped/slept
+    #       total_waited_ms (int) – cumulative milliseconds spent sleeping
+    #     """
+    #     waited = False
+    #     loop_count = 0
+    #     total_waited_ms = 0
 
-        # 4) (Optional) verbose logging
-        if self.show_logs:
-            in_tok  = generation_result.meta.get("input_tokens", 0)
-            out_tok = generation_result.meta.get("output_tokens", 0)
-            cost    = generation_result.meta.get("total_cost", 0.0)
-            self.logger.info(
-                f"Op:{operation_name} ReqID:{generation_result.request_id} "
-                f"InTok:{in_tok} OutTok:{out_tok} Cost:${cost:.5f}"
+    #     while self.metrics.is_rpm_limited():
+    #         waited = True
+    #         loop_count += 1
+
+    #         # 1) Determine how long to sleep until the oldest timestamp drops out of the window
+    #         wait_for_s = self._secs_until_window_refresh(self.metrics.sent_ts)
+    #         wait_ms = int(wait_for_s * 1000)
+    #         total_waited_ms += wait_ms
+
+    #         # 2) Increment the number of tasks currently sleeping
+    #         async with self._rpm_waiters_lock:
+    #             self._rpm_waiters_count += 1
+    #             current_waiters = self._rpm_waiters_count
+
+    #         # 3) Only log once per loop iteration
+    #         if loop_count > self._rpm_last_logged_round:
+    #             self._rpm_last_logged_round = loop_count
+    #             self.logger.warning(
+    #                 f"RPM cap reached. {current_waiters} tasks are sleeping "
+    #                 f"{wait_for_s:.2f}s ({wait_ms} ms), loop #{loop_count}."
+    #             )
+
+    #         # 4) Sleep until the window refreshes
+    #         await asyncio.sleep(wait_for_s)
+
+    #         # 5) After waking up, decrement the waiters count
+    #         async with self._rpm_waiters_lock:
+    #             self._rpm_waiters_count -= 1
+
+    #     return waited, loop_count, total_waited_ms
+
+    async def _wait_if_rate_limited_async(self) -> Tuple[bool, int, int]:
+        """
+        Block while `metrics.is_rpm_limited()` is True.
+
+        Returns
+        -------
+        waited          : bool   – True if we actually slept at least once
+        loop_count      : int    – how many sleep iterations we performed
+        total_waited_ms : int    – cumulative sleep time in milliseconds
+        """
+        waited = False
+        loop_count = 0
+        total_waited_ms = 0
+
+        while self.metrics.is_rpm_limited():
+            waited = True
+            loop_count += 1
+
+            # seconds until the oldest request drops out of the window
+            wait_for_s = self._secs_until_window_refresh(self.metrics.sent_ts)
+            wait_ms    = int(wait_for_s * 1000)
+            total_waited_ms += wait_ms
+            wake_ts    = time.time() + wait_for_s           # wall-clock when this sleep ends
+
+            # ── critical section ──────────────────────────────────────────────
+            async with self._rpm_waiters_lock:
+                self._rpm_waiters_count += 1
+                # If *this* coroutine is the first one to start (i.e. its wake_ts is
+                # later than the current recorded round), it becomes the "logger"
+                if wake_ts > self._rpm_sleep_until_ts + 1e-3:   # > 1 ms later ⇒ new round
+                    self._rpm_sleep_until_ts = wake_ts
+                    current_waiters = self._rpm_waiters_count
+                    self.logger.warning(
+                        "RPM cap reached. %d tasks are sleeping %.2fs (%d ms), loop #%d.",
+                        current_waiters, wait_for_s, wait_ms, loop_count
+                    )
+            # ──────────────────────────────────────────────────────────────────
+
+            await asyncio.sleep(wait_for_s)
+
+            # once awake, decrement the waiter count
+            async with self._rpm_waiters_lock:
+                self._rpm_waiters_count -= 1
+
+        return waited, loop_count, total_waited_ms
+
+    # async def _wait_if_rate_limited_async(self) -> Tuple[bool, int, int]:
+    #     """
+    #     If RPM limit is reached, sleeps until the window refreshes.
+    #     Returns:
+    #     waited (bool)         – True if any sleep occurred  
+    #     loop_count (int)      – how many times we looped/slept  
+    #     total_waited_mb (int) – cumulative milliseconds spent sleeping  
+    #     """
+    #     waited = False
+    #     loop_count = 0
+    #     total_waited_ms = 0
+
+    #     while self.metrics.is_rpm_limited():
+    #         waited = True
+    #         loop_count += 1
+
+    #         # Calculate how long until the oldest timestamp falls out of the window
+    #         wait_for_s = self._secs_until_window_refresh(self.metrics.sent_ts)
+    #         wait_ms = int(wait_for_s * 1000)
+    #         total_waited_ms += wait_ms
+
+    #         # 1) Increment the shared counter of tasks currently sleeping
+    #         async with self._rpm_waiters_lock:
+    #             self._rpm_waiters_count += 1
+    #             current_waiters = self._rpm_waiters_count
+
+    #         # 2) Only log once per loop iteration
+    #         if loop_count > self._rpm_last_logged_round:
+    #             self._rpm_last_logged_round = loop_count
+    #             self.logger.warning(
+    #                 f"RPM cap reached. {current_waiters} tasks are sleeping "
+    #                 f"{wait_for_s:.2f}s ({wait_ms} ms), loop #{loop_count}."
+    #             )
+
+    #         # 3) Actually sleep until the window refreshes
+    #         await asyncio.sleep(wait_for_s)
+
+    #         # 4) Once woken, decrement the shared counter
+    #         async with self._rpm_waiters_lock:
+    #             self._rpm_waiters_count -= 1
+
+    #     return waited, loop_count, total_waited_ms
+
+
+    # async def _wait_if_rate_limited_async(self) -> tuple[bool, int, int]:
+    #     """
+    #     Block until RPM < max_rpm.
+
+    #     Returns
+    #     -------
+    #     waited          : bool   – True if we actually slept
+    #     loop_count      : int    – how many sleep iterations
+    #     total_waited_ms : int
+    #     """
+    #     waited = False
+    #     loop_count = 0
+    #     total_waited_ms = 0
+
+    #     while self.metrics.is_rpm_limited():
+    #         # ---------- register as a waiter ---------- #
+    #         async with self._rpm_waiters_lock:
+    #             self.__class__._rpm_waiters_count += 1
+    #             waiters = self.__class__._rpm_waiters_count
+
+    #         waited = True
+    #         wait_for_s = self._secs_until_window_refresh(self.metrics.sent_ts)
+    #         wait_ms    = int(wait_for_s * 1000)
+    #         total_waited_ms += wait_ms
+
+    #         if loop_count == 0:          # log **once** per coroutine
+    #             self.logger.warning(
+    #                 "RPM cap reached. %d tasks are sleeping %.2fs (%d ms), loop #%d.",
+    #                 waiters, wait_for_s, wait_ms, loop_count + 1
+    #             )
+
+    #         loop_count += 1
+    #         await asyncio.sleep(wait_for_s)
+
+    #         # ---------- we’re about to re-check the limit ---------- #
+    #         async with self._rpm_waiters_lock:
+    #             self.__class__._rpm_waiters_count -= 1
+
+    #     return waited, loop_count, total_waited_ms
+
+    # async def _wait_if_rate_limited_async(self) -> Tuple[bool, int, int]:
+    #     """
+    #     If RPM limit is reached, sleeps until the window refreshes.
+    #     Returns:
+    #     waited (bool)         – True if any sleep occurred  
+    #     loop_count (int)      – how many times we looped/slept  
+    #     total_waited_ms (int) – cumulative milliseconds spent sleeping  
+    #     """
+    #     waited = False
+    #     loop_count = 0
+    #     total_waited_ms = 0
+
+    #     while self.metrics.is_rpm_limited():
+    #         waited = True
+    #         loop_count += 1
+
+    #         wait_for_s = self._secs_until_window_refresh(self.metrics.sent_ts)
+    #         wait_ms = int(wait_for_s * 1000)
+    #         total_waited_ms += wait_ms
+
+    #         self.logger.warning(
+    #             f"RPM cap reached. Sleeping {wait_for_s:.2f}s ({wait_ms} ms), loop #{loop_count}."
+    #         )
+    #         await asyncio.sleep(wait_for_s)
+
+    #     return waited, loop_count, total_waited_ms
+
+    def _wait_if_rate_limited_sync(self) -> Tuple[bool, int, int]:
+        """
+        If RPM limit is reached, sleeps until the window refreshes.
+        Returns:
+        waited (bool)         – True if any sleep occurred  
+        loop_count (int)      – how many times we looped/slept  
+        total_waited_ms (int) – cumulative milliseconds spent sleeping  
+        """
+        waited = False
+        loop_count = 0
+        total_waited_ms = 0
+
+        while self.metrics.is_rpm_limited():
+            waited = True
+            loop_count += 1
+
+            wait_for_s = self._secs_until_window_refresh(self.metrics.sent_ts)
+            wait_ms = int(wait_for_s * 1000)
+            total_waited_ms += wait_ms
+
+            self.logger.warning(
+                f"RPM cap reached. Sleeping {wait_for_s:.2f}s ({wait_ms} ms), loop #{loop_count}."
             )
+            time.sleep(wait_for_s)
+
+        return waited, loop_count, total_waited_ms
 
 
 
-    async def _log_metrics_loop(self, interval: float):
-        while True:
-            rpm   = self.get_current_rpm()          # sent/min
-            repm  = self.get_current_repmin()       # received/min
-            tpm   = self.get_current_tpm()
-            cost  = self.get_total_cost()
+    async def _wait_if_token_limited_async(self) -> Tuple[bool, int, int]:
+        """
+        If TPM limit is reached, sleeps until the window refreshes.
+        Returns:
+        waited (bool)         – True if any sleep occurred  
+        loop_count (int)      – how many times we looped/slept  
+        total_waited_ms (int) – cumulative milliseconds spent sleeping  
+        """
+        waited = False
+        loop_count = 0
+        total_waited_ms = 0
 
-            rpm_str  = f"{rpm:.0f}/{self.max_rpm}"
-            tpm_str  = f"{tpm:.0f}/{self.max_tpm or '∞'}"
+        while self.metrics.is_tpm_limited():
+            waited = True
+            loop_count += 1
 
-            self._metrics_logger.info(
-                f"TotalRequest: {self.total_requests_sent}   "
-                f"TotalReceived: {self.total_responses_rcv}   "
-                f"RPM: {rpm_str}   RePM: {repm:.0f}   "
-                f"TPM: {tpm_str}   Cost($): {cost:.5f}"
+            wait_for_s = self._secs_until_window_refresh(self.metrics.tok_ts, is_pair=True)
+            wait_ms = int(wait_for_s * 1000)
+            total_waited_ms += wait_ms
+
+            self.logger.warning(
+                f"TPM cap reached. Sleeping {wait_for_s:.2f}s ({wait_ms} ms), loop #{loop_count}."
             )
-            await asyncio.sleep(interval)
+            await asyncio.sleep(wait_for_s)
 
-    def _clean_old_timestamps(self):
-        """Remove any timestamps older than the RPM window."""
-        now = time.time()
-        self.request_timestamps = deque(
-            ts for ts in self.request_timestamps
-            if now - ts <= self.rpm_window_seconds
-        )
+        return waited, loop_count, total_waited_ms
 
-    def get_current_rpm(self) -> float:
-        """Calculates the current Requests Per Minute (RPM)."""
-        self._clean_old_timestamps()
-        rpm = len(self.request_timestamps) * (60 / self.rpm_window_seconds)
-        return rpm
 
+    def _wait_if_token_limited_sync(self) -> Tuple[bool, int, int]:
+        """
+        If TPM limit is reached, sleeps until the window refreshes.
+        Returns:
+        waited (bool)         – True if any sleep occurred  
+        loop_count (int)      – how many times we looped/slept  
+        total_waited_ms (int) – cumulative milliseconds spent sleeping  
+        """
+        waited = False
+        loop_count = 0
+        total_waited_ms = 0
+
+        while self.metrics.is_tpm_limited():
+            waited = True
+            loop_count += 1
+
+            wait_for_s = self._secs_until_window_refresh(self.metrics.tok_ts, is_pair=True)
+            wait_ms = int(wait_for_s * 1000)
+            total_waited_ms += wait_ms
+
+            self.logger.warning(
+                f"TPM cap reached. Sleeping {wait_for_s:.2f}s ({wait_ms} ms), loop #{loop_count}."
+            )
+            time.sleep(wait_for_s)
+
+        return waited, loop_count, total_waited_ms
+
+  
+
+    # helper
+    def _secs_until_window_refresh(self, dq: deque, *, is_pair=False) -> float:
+        if not dq:
+            return 0
+        oldest = dq[0][0] if is_pair else dq[0]
+        return max(0.0, self.metrics.window - (time.time() - oldest))
     
 
+    def _new_trace_id(self) -> str:
+        return str(uuid.uuid4())
+
+    # ------------------------------------------------------------------ #
+    #  Generation entry points
+    # ------------------------------------------------------------------ #
     def execute_generation(
         self,
         generation_request: GenerationRequest,
         operation_name: Optional[str] = None
     ) -> GenerationResult:
-           
-        """Executes the generation synchronously and stores usage statistics."""
-        generation_request.operation_name = operation_name or generation_request.operation_name
-        generation_request.request_id = generation_request.request_id or self._generate_request_id()
-
-
-         # Wait (not raise) on RPM
-        self._wait_if_rate_limited_sync()
-
-        # Wait on TPM
-        self._wait_if_token_limited_sync()
         
-        self._mark_request_sent()       
 
-        # # Rate limiting check (for synchronous calls, we can't wait asynchronously)
-        # if self.get_current_rpm() >= self.max_rpm:
-        #     self.logger.error("Rate limit exceeded. Cannot proceed with synchronous execution.")
-        #     raise Exception("Rate limit exceeded.")
-        # if self.max_tpm is not None and self.get_current_tpm() >= self.max_tpm:
-        #     raise Exception("TPM cap exceeded (sync call).")
+        trace_id = self._new_trace_id() 
+        
+       
+         # 1) Take a “before” snapshot of RPM/TPM
+        rpm_before = None
+        tpm_before = None
+        rpm_after = None
+        tpm_after = None
+        # rpm_before = self.get_current_rpm()
+       
+        try:
+            rpm_before = self.get_current_rpm()
+            tpm_before = self.get_current_tpm()
+        except Exception:
+            # If metrics object isn’t set up yet, default to None
+            rpm_before = None
+            tpm_before = None
 
-        generation_result = self.generation_engine.generate_output(generation_request)
-        generation_result.request_id = generation_request.request_id
-        self._store_usage(generation_result)
-        return generation_result
+        
+
+
+        generation_request.operation_name = operation_name or generation_request.operation_name
+        generation_request.request_id     = generation_request.request_id or self._generate_request_id()
+        generation_request.trace_id=trace_id
+        
+
+
+        # 4) Now we are about to enter any rate‐limit / concurrency waits …
+        #    At this very moment, we consider the request “enqueued.”
+        #    (It may still have to wait on RPM or TPM checks, etc.)
+        generation_enqueued_at = _now_dt()
+
+        rpm_waited, rpm_wait_loops, rpm_waited_ms =self._wait_if_rate_limited_sync()
+        tpm_waited, tpm_wait_loops, tpm_waited_ms= self._wait_if_token_limited_sync()
+
+        
+        # 6) Immediately before calling the LLM, we are “dequeued.” 
+        generation_dequeued_at = _now_dt()
+
+        
+        # self.metrics.mark_sent()   
+
+
+        self.metrics.mark_sent(trace_id)      
+        
+        result = self.generation_engine.generate_output(generation_request)
+
+        result.trace_id = trace_id
+
+        if not result.success:
+            self.metrics.unmark_sent(trace_id)
     
-    async def _wait_if_rate_limited(self):
-        """Wait until RPM drops below the max_rpm threshold."""
-        while self.get_current_rpm() >= self.max_rpm:
-            # Time until the oldest timestamp exits the window
-            wait_time = self.rpm_window_seconds - (time.time() - self.request_timestamps[0])
-            wait_time = max(wait_time, 0)
-            self.logger.warning(f"Rate limit reached. Waiting {wait_time:.2f}s.")
-            await asyncio.sleep(wait_time)
-            self._clean_old_timestamps()
+        self._after_response(result)
 
-    def _wait_if_rate_limited_sync(self) -> None:
-        """Block until RPM drops below max_rpm (synchronous path)."""
-        while self.get_current_rpm() >= self.max_rpm:
-            oldest_ts = self.request_timestamps[0]
-            sleep_for = self.rpm_window_seconds - (time.time() - oldest_ts)
-            sleep_for = max(sleep_for, 0)
-            self.logger.warning(
-                f"RPM cap reached ({self.max_rpm}). Sleeping {sleep_for:.2f}s (sync)."
-            )
-            time.sleep(sleep_for)
-            self._clean_old_timestamps()
+
+        try:
+            rpm_after = self.get_current_rpm()
+            tpm_after = self.get_current_tpm()
+        except Exception:
+            rpm_after = None
+            tpm_after = None
+
+        result.rpm_at_the_end= rpm_after
+        result.rpm_at_the_beginning= rpm_before
+        result.tpm_at_the_end= tpm_after
+        result.tpm_at_the_beginning= tpm_before
+
+        
+        result.timestamps.generation_enqueued_at  = generation_enqueued_at
+        result.timestamps.generation_dequeued_at  = generation_dequeued_at
+
+        
+        result.rpm_waited=rpm_waited
+        result.rpm_wait_loops=rpm_wait_loops
+        result.rpm_waited_ms=rpm_waited_ms
+
+        result.tpm_waited=tpm_waited
+        result.tpm_wait_loops=tpm_wait_loops
+        result.tpm_waited_ms=tpm_waited_ms
+
+
+        return result
+    
+
+
 
     async def execute_generation_async(
         self,
         generation_request: GenerationRequest,
         operation_name: Optional[str] = None
     ) -> GenerationResult:
+        
+
+        trace_id = self._new_trace_id() 
+        
+
+          # 1) Take a “before” snapshot of RPM/TPM
+        rpm_before = None
+        tpm_before = None
+        rpm_after = None
+        tpm_after = None
+        # rpm_before = self.get_current_rpm()
+       
+        try:
+            rpm_before = self.get_current_rpm()
+            tpm_before = self.get_current_tpm()
+        except Exception:
+            # If metrics object isn’t set up yet, default to None
+            rpm_before = None
+            tpm_before = None
+
+        
+        
         generation_request.operation_name = operation_name or generation_request.operation_name
-        generation_request.request_id = (
-            generation_request.request_id or self._generate_request_id()
-        )
+        generation_request.request_id     = generation_request.request_id or self._generate_request_id()
+        generation_request.trace_id=trace_id
 
-        # # ← This call ensures you don’t exceed max_rpm
-        await self._wait_if_rate_limited()
-        await self._wait_if_token_limited()
 
-        self._mark_request_sent()        
+         # 4) We’re about to enter any rate‐limit or concurrency wait → “enqueued”
+        generation_enqueued_at = _now_dt()
+
+        
+
+            # ← use the async wait methods here, not the sync ones
+        rpm_waited, rpm_wait_loops, rpm_waited_ms = await self._wait_if_rate_limited_async()
+        tpm_waited, tpm_wait_loops, tpm_waited_ms = await self._wait_if_token_limited_async()
+
+
+        # 6) Now wait on the concurrency semaphore before calling the LLM
+        generation_dequeued_at = _now_dt()
+
+       
+        # self.metrics.mark_sent()                             # ← SENT
+        # self.metrics.mark_sent(trace_id)  
+
 
         async with self.semaphore:
-            generation_result = await self.generation_engine.generate_output_async(generation_request)
-            self._store_usage(generation_result)
+            self.metrics.mark_sent(trace_id)
+            result = await self.generation_engine.generate_output_async(generation_request)
+            result.trace_id = trace_id
+            if not result.success:
+                self.metrics.unmark_sent(trace_id)
+            self._after_response(result)
+        
+        # async with self.semaphore:
+        #     result = await self.generation_engine.generate_output_async(generation_request)
+        #     result.trace_id = trace_id
+           
+        #     if not result.success:
+        #         self.metrics.unmark_sent(trace_id)
+
+        #     self._after_response(result)
+
+
+            try:
+                rpm_after = self.get_current_rpm()
+                tpm_after = self.get_current_tpm()
+            except Exception:
+                rpm_after = None
+                tpm_after = None
+
+            result.rpm_at_the_end= rpm_after
+            result.rpm_at_the_beginning= rpm_before
+            result.tpm_at_the_end= tpm_after
+            result.tpm_at_the_beginning= tpm_before
+
+
+            result.timestamps.generation_enqueued_at  = generation_enqueued_at
+            result.timestamps.generation_dequeued_at  = generation_dequeued_at
+
+            
+            result.rpm_waited=rpm_waited
+            result.rpm_wait_loops=rpm_wait_loops
+            result.rpm_waited_ms=rpm_waited_ms
+
+            result.tpm_waited=tpm_waited
+            result.tpm_wait_loops=tpm_wait_loops
+            result.tpm_waited_ms=tpm_waited_ms
+
+            return result
+
+    # ------------------------------------------------------------------ #
+    #  After-response bookkeeping
+    # ------------------------------------------------------------------ #
+    def _after_response(self, generation_result: GenerationResult) -> None:
+        # ---- metrics ----
+        tokens = generation_result.usage.get("total_tokens", 0)
+        cost   = generation_result.usage.get("total_cost",   0.0)
+
+        # ------------ atomic metrics update ------------
+        # with self._metrics_lock:
+        #     self.metrics.mark_rcv(tokens=tokens, cost=cost)    # ← RECEIVED
+        # self.metrics.mark_rcv(tokens=tokens, cost=cost)    # ← RECEIVED
+        self.metrics.mark_rcv(generation_result.trace_id,
+                      tokens=tokens, cost=cost) 
+    
+        
+        # ---- aggregate per-operation usage ----
+        op_name = generation_result.operation_name or "unknown_operation"
+        self.usage_stats.update(generation_result.usage, op_name)
+
+        # ---- optional verbose log ----
+        if self.show_logs:
+            self.logger.info(
+                f"Op:{op_name} ReqID:{generation_result.request_id} "
+                f"InTok:{generation_result.usage.get('input_tokens',0)} "
+                f"OutTok:{generation_result.usage.get('output_tokens',0)} "
+                f"Cost:${cost:.5f}"
+            )
+
+    # ------------------------------------------------------------------ #
+    #  Metrics emission loop
+    # ------------------------------------------------------------------ #
+    async def _emit_metrics(self, every: float):
+        while True:
+            snap = self.metrics.snapshot()
+            self._metrics_logger.info(
+                f"TotalReq:{snap.total_sent}  TotalRcv:{snap.total_rcv}  "
+                f"RPM:{snap.rpm:.0f}/{self.metrics.max_rpm or '∞'}  "
+                f"RePM:{snap.repm:.0f}  "
+                f"TPM:{snap.tpm:.0f}/{self.metrics.max_tpm or '∞'}  "
+                f"Cost:${snap.cost:.5f}"
+            )
+            await asyncio.sleep(every)
+
+    # ------------------------------------------------------------------ #
+    #  Public helpers
+    # ------------------------------------------------------------------ #
+    def load_prompts(self, yaml_file_path: str) -> None:
+        self.generation_engine.load_prompts(yaml_file_path)
+
+    def get_usage_stats(self) -> dict:
+        return self.usage_stats.to_dict()
+
+    def get_total_cost(self) -> float:
+        return self.metrics.total_cost
+
+    def reset_usage_stats(self) -> None:
+        self.usage_stats  = UsageStats(model=self.generation_engine.llm_handler.model_name)
+        self.metrics      = MetricsRecorder(window=self.metrics.window,
+                                            max_rpm=self.metrics.max_rpm,
+                                            max_tpm=self.metrics.max_tpm)
+        
+
+    # ------------------------------------------------------------------ #
+    #  Runtime re-configuration helpers  (optional)
+    # ------------------------------------------------------------------ #
+    def set_rate_limits(
+        self,
+        *,
+        max_rpm: int | None = None,
+        max_tpm: int | None = None
+    ) -> None:
+        """Change RPM / TPM caps on the fly."""
+        if max_rpm is not None:
+            self.metrics.max_rpm = max_rpm
+        if max_tpm is not None:
+            self.metrics.max_tpm = max_tpm
+
+    def set_concurrency(self, max_concurrent_requests: int) -> None:
+        """Adjust the async semaphore for new parallelism."""
+        self.semaphore = asyncio.Semaphore(max_concurrent_requests)
+
+
+    # ------------------------------------------------------------------ #
+    #  Legacy metric accessors (delegate to MetricsRecorder)
+    # ------------------------------------------------------------------ #
+    def get_current_rpm(self) -> float:
+        """Requests-per-minute (sent)."""
+       
+        return self.metrics.rpm()
+    
+    def get_current_repmin(self) -> float:
+        """Responses-per-minute (received)."""
+        return self.metrics.repm()
+    
+    def get_current_tpm(self) -> float:
+        """Tokens-per-minute (received)."""
+        
+        return self.metrics.tpm()
+
+
+
+# Main function for testing
+def main():
+    class MyLLMService(BaseLLMService):
+    
+        def ask_llm_to_tell_capital(self,user_input: str,) -> GenerationResult:
+            
+            prompt= f"bring me the capital of this country: {user_input}"
+            generation_request = GenerationRequest(
+                formatted_prompt=prompt,
+                model="gpt-4o",  
+            )
+            generation_result = self.execute_generation(generation_request)
+            return generation_result
+        
+        
+        def bring_only_capital(self,user_input: str,) -> GenerationResult:
+
+
+            prompt= f"bring me the capital of this {user_input}"
+        
+            
+            pipeline_config = [
+                {
+                    'type': 'SemanticIsolation',   # uses LLMs to isolate specific part of the answer.
+                    'params': {
+                        'semantic_element_for_extraction': 'just the capital'
+                    }
+                }
+            
+
+            ]
+            generation_request = GenerationRequest(
+            
+                formatted_prompt=prompt,
+                model="gpt-4o-mini",  # Use the model specified in __init__
+                pipeline_config=pipeline_config,
+            
+            )
+
+            # Execute the generation synchronously
+            generation_result = self.execute_generation(generation_request)
             return generation_result
 
 
-    def load_prompts(self, yaml_file_path: str):
-        """Loads prompts from a YAML file."""
-        self.generation_engine.load_prompts(yaml_file_path)
+    llmservice= MyLLMService()
+    our_input= "Turkey"
 
-    # Additional methods for usage stats
-    def get_usage_stats(self) -> dict:
-        """Returns the current usage statistics as a dictionary."""
-        return self.usage_stats.to_dict()
+    generation_result =llmservice.ask_llm_to_tell_capital(our_input)
+    print(generation_result)
 
-    def reset_usage_stats(self):
-        """Resets the usage statistics."""
-        self.usage_stats = UsageStats(model=self.generation_engine.llm_handler.model_name)
 
-        # Also reset request timestamps
-        self.request_timestamps.clear()
+
+
+
+
+
+
+if __name__ == '__main__':
+    main()

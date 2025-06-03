@@ -148,6 +148,85 @@ class MetricsRecorder:
             # self._trim_times(self.rcv_ts,  now)
             self._trim_times(self.rcv_ts,  now, self.window)
             self._trim_tokens(now)
+
+    def unmark_sent(self, req_id: int) -> None:
+        """
+        If we called mark_sent(...) but then discovered
+        that no real HTTP request ever went out (e.g. PermissionDenied),
+        reverse that increment. This must only be called if the very last
+        thing you did was mark_sent(req_id), and that ID is indeed at the end
+        of the deque.
+        """
+        with self._lock:
+            # If the last sent_id matches req_id, remove it
+            if self.sent_ids and self.sent_ids[-1] == req_id:
+                self.sent_ids.pop()
+                self.sent_ts.pop()
+                self.total_sent -= 1
+            else:
+                # In a highly concurrent scenario, other calls might have slipped in.
+                # In that case, we search for req_id and remove the first matching entry.
+                try:
+                    # find index of req_id in sent_ids
+                    idx = list(self.sent_ids).index(req_id)
+                except ValueError:
+                    return  # nothing to undo
+                # remove that index from both deques
+                # Note: deque has no direct remove-by-index, so we can rebuild
+                new_ids = deque()
+                new_ts  = deque()
+                for i, rid in enumerate(self.sent_ids):
+                    if i == idx:
+                        continue
+                    new_ids.append(rid)
+                for i, ts in enumerate(self.sent_ts):
+                    if i == idx:
+                        continue
+                    new_ts.append(ts)
+                self.sent_ids = new_ids
+                self.sent_ts  = new_ts
+                self.total_sent -= 1
+
+    def unmark_rcv(self, req_id: int) -> None:
+        """
+        Reverse a mark_rcv if you discover that nothing was actually returned
+        (or you want to roll back the token/cost accounting).
+        """
+        with self._lock:
+            if self.rcv_ids and self.rcv_ids[-1] == req_id:
+                # simplest case: the very last response was ours
+                self.rcv_ids.pop()
+                ts, toks = self.tok_ts.pop()
+                self.rcv_ts.pop()
+                self.total_rcv  -= 1
+                self.total_cost -= 0  # if you cached the cost, subtract it
+            else:
+                # fall back to searching for the req_id
+                try:
+                    idx = list(self.rcv_ids).index(req_id)
+                except ValueError:
+                    return
+                new_ids = deque()
+                new_ts  = deque()
+                new_tok = deque()
+                for i, rid in enumerate(self.rcv_ids):
+                    if i == idx:
+                        continue
+                    new_ids.append(rid)
+                for i, tstamp in enumerate(self.rcv_ts):
+                    if i == idx:
+                        continue
+                    new_ts.append(tstamp)
+                for i, (tstamp, toks) in enumerate(self.tok_ts):
+                    if i == idx:
+                        continue
+                    new_tok.append((tstamp, toks))
+                self.rcv_ids = new_ids
+                self.rcv_ts  = new_ts
+                self.tok_ts  = new_tok
+                self.total_rcv  -= 1
+                # Subtract whichever cost was associated; in practice you might store
+                # a separate dict of {req_id: cost} so you can do “self.total_cost -= cost_dict[req_id]”.
      
     # ---------------- computed properties ---------------- #
     def rpm(self) -> float:
