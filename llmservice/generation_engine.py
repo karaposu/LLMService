@@ -214,7 +214,7 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         
         # 5) Run any post‐processing pipeline (if configured)
         if generation_request.pipeline_config:
-            generation_result = self.execute_pipeline(
+            generation_result = self.execute_pipeline_async(
                 generation_result,
                 generation_request.pipeline_config
             )
@@ -256,10 +256,7 @@ Provide the answer strictly in the following JSON format, do not combine anythin
             operation_name=generation_request.operation_name
         )
 
-        
-        
-
-        
+ 
         generation_result.timestamps.generation_requested_at= generation_requested_at
 
         generation_result.generation_request=generation_request
@@ -334,6 +331,142 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         # Update the final content
         generation_result.content = current_content
         return generation_result
+
+
+
+    # ------------------------------------------------------------------ #
+    #  Async pipeline (run steps sequentially but without blocking)
+    # ------------------------------------------------------------------ #
+    async def execute_pipeline_async(
+        self,
+        generation_result: GenerationResult,
+        pipeline_config: List[Dict[str, Any]],
+    ) -> GenerationResult:
+        """
+        Asynchronous version of execute_pipeline.
+        Every step is awaited *if* an async implementation exists;
+        otherwise we fall back to the synchronous one.
+
+        The logic / error handling mirrors the sync function 1-for-1 so the
+        calling code can rely on identical behaviour.
+        """
+        current_content = generation_result.raw_content
+
+        for step_config in pipeline_config:
+            step_type   = step_config.get("type")
+            params      = step_config.get("params", {})
+            async_name  = f"process_{step_type.lower()}_async"
+            sync_name   = f"process_{step_type.lower()}"
+
+            # Prefer an async implementation ↓
+            processing_method = getattr(self, async_name, None)
+            is_async = processing_method is not None and asyncio.iscoroutinefunction(processing_method)
+
+            if not is_async:
+                processing_method = getattr(self, sync_name, None)
+
+            step_result = PipelineStepResult(
+                step_type      = step_type,
+                success        = False,
+                content_before = current_content,
+                content_after  = None,
+            )
+
+            if processing_method is None:
+                err_msg = f"Unknown processing step type: {step_type}"
+                step_result.error_message = err_msg
+                generation_result.success = False
+                generation_result.error_message = err_msg
+                generation_result.pipeline_steps_results.append(step_result)
+                return generation_result
+
+            try:
+                # Await async, call sync
+                if is_async:
+                    content_after = await processing_method(current_content, **params)
+                else:
+                    content_after = processing_method(current_content, **params)
+
+                step_result.success       = True
+                step_result.content_after = content_after
+                current_content           = content_after
+
+            except Exception as exc:
+                step_result.error_message = str(exc)
+                generation_result.success = False
+                generation_result.error_message = (
+                    f"Processing step '{step_type}' failed: {exc}"
+                )
+                self.logger.error(generation_result.error_message)
+                generation_result.pipeline_steps_results.append(step_result)
+                return generation_result
+
+            # Record successful step
+            generation_result.pipeline_steps_results.append(step_result)
+
+        # All steps succeeded → update final content
+        generation_result.content = current_content
+        return generation_result
+
+    
+
+
+    async def process_semanticisolation_async(
+        self,
+        content: str,
+        *,
+        semantic_element_for_extraction: str,
+    ) -> str:
+        """
+        Asynchronous counterpart of `process_semanticisolation`.
+
+        • Builds the same “isolate the semantic element” prompt  
+        • Uses *one existing* `GenerationEngine` / `LLMHandler` instance  
+        • Awaits `self.generate_async(…)` so the event-loop is never blocked
+
+        Parameters
+        ----------
+        content : str
+            The original LLM answer that contains extra information.
+        semantic_element_for_extraction : str
+            The specific piece of information we want to isolate (e.g. "pure category").
+
+        Returns
+        -------
+        str
+            The isolated semantic element (e.g. just `"Retail Purchases"`).
+
+        Raises
+        ------
+        RuntimeError
+            If the downstream LLM call fails or the expected key is not found.
+        """
+        data_for_placeholders = {
+            "answer_to_be_refined": content,
+            "semantic_element_for_extraction": semantic_element_for_extraction,
+        }
+
+        # ---------- launch the SECOND LLM call (non-blocking) ----------
+        refine_result = await self.generate_async(
+            unformatted_template=self.semantic_isolation_prompt_template,
+            data_for_placeholders=data_for_placeholders,
+        )
+
+        # ---------- error handling ----------
+        if not refine_result.success:
+            raise RuntimeError(
+                f"Semantic-isolation LLM call failed: {refine_result.error_message}"
+            )
+
+        # ---------- parse the JSON-ish string ----------
+        try:
+            isolated_answer = self.s2d.run(refine_result.raw_content)["answer"]
+        except Exception as exc:
+            raise RuntimeError(
+                f"Could not parse isolation response: {refine_result.raw_content!r}"
+            ) from exc
+
+        return isolated_answer
 
     # Define processing methods
     def process_semanticisolation(self, content: str, semantic_element_for_extraction: str) -> str:
@@ -466,7 +599,7 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         # 4) Format and return
         tmpl = PromptTemplate.from_template(unformatted_template)  # type: ignore
         return tmpl.format(**data_for_placeholders)  # type: ignore
-        
+    
     @timed("invoke_sync")      
     def generate(
         self,

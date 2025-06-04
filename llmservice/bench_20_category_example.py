@@ -25,6 +25,7 @@ logging.basicConfig(
 # ─────────────────────────────  test payload  ──────────────────────────────
 
 
+
 CATEGORY_TEXT = """
 # auto-categorization-trigger
 categories:
