@@ -113,7 +113,7 @@ class BaseLLMService(ABC):
     # ------------------------------------------------------------------ #
 
 
-    @timed("execute_generation") 
+    # @timed("execute_generation") 
     def execute_generation(
         self,
         generation_request: GenerationRequest,
@@ -221,7 +221,7 @@ class BaseLLMService(ABC):
     
 
 
-    @timed("execute_generation_async")
+    # @timed("execute_generation_async")
     async def execute_generation_async(
         self,
         generation_request: GenerationRequest,

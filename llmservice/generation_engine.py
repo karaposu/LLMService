@@ -75,7 +75,7 @@ Provide the answer strictly in the following JSON format, do not combine anythin
     
     
 
-    @timed("invoke_async")
+    # @timed("invoke_async")
     async def generate_async(
         self,
         formatted_prompt: Optional[str] = None,
@@ -600,7 +600,7 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         tmpl = PromptTemplate.from_template(unformatted_template)  # type: ignore
         return tmpl.format(**data_for_placeholders)  # type: ignore
     
-    @timed("invoke_sync")      
+    # @timed("invoke_sync")      
     def generate(
         self,
         formatted_prompt: Optional[str] = None,
