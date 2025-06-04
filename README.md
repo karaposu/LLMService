@@ -90,7 +90,6 @@ LLMService provides an abstract `BaseLLMService` class to guide users in impleme
 ![LLMService Architecture](https://raw.githubusercontent.com/karaposu/LLMService/refs/heads/main/assets/architecture.png) 
 
 
-![schemas](https://raw.githubusercontent.com/karaposu/LLMService/refs/heads/main/assets/schemas.png)  
 
 # Usage 
 
