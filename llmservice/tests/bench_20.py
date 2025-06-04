@@ -10,7 +10,7 @@ Compares throughput for 20 records:
 import time, asyncio, logging, sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from llmservice.bench_service import BenchLLMService
+from llmservice.tests.bench_service import BenchLLMService
 
 logging.basicConfig(
     level=logging.INFO,

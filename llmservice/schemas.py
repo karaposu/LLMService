@@ -122,6 +122,8 @@ class InvokeResponseData:
 
 @dataclass
 class EventTimestamps:
+
+    
     generation_requested_at:      Optional[datetime] = None
     generation_enqueued_at:       Optional[datetime] = None
     generation_dequeued_at:       Optional[datetime] = None
@@ -237,11 +239,9 @@ class EventTimestamps:
 
 @dataclass
 class GenerationRequest:
-    # Provide either `formatted_prompt` OR both of `unformatted_prompt` and `data_for_placeholders`
     formatted_prompt: Optional[str] = None
     unformatted_prompt: Optional[str] = None
     data_for_placeholders: Optional[Dict[str, Any]] = None
-    
     model: Optional[str] = None
     output_type: Literal["json", "str"] = "str"
     operation_name: Optional[str] = None
@@ -249,8 +249,6 @@ class GenerationRequest:
     number_of_retries: Optional[int] = None
     pipeline_config: List[Dict[str, Any]] = field(default_factory=list)
     fail_fallback_value: Optional[str] = None
-
-    # generation_requested_at  =None
 
     def __post_init__(self):
         has_formatted    = self.formatted_prompt is not None
@@ -297,19 +295,8 @@ class GenerationResult:
     request_id: Optional[Union[str, int]] = None
     content: Optional[Any] = None
     raw_content: Optional[str] = None  # Store initial LLM output
-
-
     retried:  Optional[Any] = None, 
     attempt_count:  Optional[Any] = None,
-
-    
-    total_invoke_duration_ms:  Optional[Any] = None, 
-    total_backoff_ms: Optional[Any] = None, 
-    
-    #total_retry_backoff_ms: Optional[Any] = None, 
-    #total_rpm_backoff_ms
-
-    
     operation_name: Optional[str] = None
     usage: Dict[str, Any] = field(default_factory=dict)
     elapsed_time: Optional[float] = None
@@ -318,29 +305,25 @@ class GenerationResult:
     formatted_prompt: Optional[str] = None
     unformatted_prompt: Optional[str] = None
     response_type: Optional[str] = None
-   
     pipeline_steps_results: List[PipelineStepResult] = field(default_factory=list)
-    
+    # rpm tpm related logs
     rpm_at_the_beginning: Optional[int] = None
     rpm_at_the_end: Optional[int] = None
     tpm_at_the_beginning: Optional[int] = None
     tpm_at_the_end: Optional[int] = None
-
-    # Six new “rate-limit wait” fields
     rpm_waited: Optional[bool] = None
     rpm_wait_loops: Optional[int] = None
     rpm_waited_ms: Optional[int] = None
-    
     tpm_waited: Optional[bool] = None
     tpm_wait_loops: Optional[int] = None
     tpm_waited_ms: Optional[int] = None
-
-
+    total_invoke_duration_ms:  Optional[Any] = None, 
+    total_backoff_ms: Optional[Any] = None, 
     backoff: BackoffStats = field(default_factory=BackoffStats)
-    
 
+    # detailed timestamp logs  requested_at, enqueued_at... 
     timestamps: Optional[EventTimestamps] = None
-   
+    # complete copy of the generation_request
     generation_request: Optional[GenerationRequest] = None
 
 

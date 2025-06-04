@@ -14,7 +14,7 @@ import asyncio
 from datetime import timedelta
 from .schemas import InvokeResponseData, InvocationAttempt
 from .schemas import ErrorType
-
+from .utils import _now_dt
 
 from langchain_openai import ChatOpenAI
 from langchain.chains import LLMChain
@@ -61,20 +61,8 @@ gpt_models_cost = {
 gpt_model_list= list(gpt_models_cost.keys())
 
 
-
 import time
 from datetime import datetime, timezone
-
-
-
-
-
-def _now_dt() -> datetime:
-    """Current UTC time with microsecond precision."""
-    return datetime.now(timezone.utc)
-
-
-
 
 
 class LLMHandler:

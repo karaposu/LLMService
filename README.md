@@ -29,7 +29,7 @@ pip install llmservice
   - [Config & Installation](#config--installation)
   - [Step 1: Subclassing `BaseLLMService` and create methods](#step-1-subclassing-basellmservice-and-create-methods)
   - [Step 2: Import your llm layer and use the methods](#step-2-import-your-llm-layer-and-use-the-methods)
-  - [Step 3: Life is about joyment. Do not miss life.](#step-3-life-is-about-joyment-do-not-miss-life)
+  - [Step 3: Inspect and Use generation_result](#step-3-inspect-and-use-generation_result)
 - [Postprocessing Pipeline](#postprocessing-pipeline)
   - [Method 1: SemanticIsolator](#method-1-semanticisolator)
   - [Method 2: ConvertToDict](#method-2-converttodict)
@@ -89,6 +89,7 @@ LLMService provides an abstract `BaseLLMService` class to guide users in impleme
 
 ![LLMService Architecture](https://raw.githubusercontent.com/karaposu/LLMService/refs/heads/main/assets/architecture.png) 
 
+
 ![schemas](https://raw.githubusercontent.com/karaposu/LLMService/refs/heads/main/assets/schemas.png)  
 
 # Usage 
@@ -118,7 +119,7 @@ class MyLLMService(BaseLLMService):
 
           generation_request = GenerationRequest(
               formatted_prompt=my_prompt,
-               model="gpt-4o", 
+               model="gpt-4.1-nano", 
           )
 
           # Execute the generation synchronously
@@ -141,8 +142,92 @@ if __name__ == '__main__':
     # to get the result text you can print result.content
 ```
 
-## Step 3: Some simple fact  
-Dont forget to live your life man. Remember all code is legacy the moment it is written.  
+## Step 3: Inspect and Use generation_result  
+
+Below is the structure of the `GenerationResult` dataclass. While the `.content` field provides the direct LLM response, advanced applications—especially those with high LLM throughput—will benefit from leveraging the full set of metadata, including timing, usage, retry logic, and error diagnostics.
+
+
+```python
+@dataclass
+class GenerationResult:
+    success: bool
+    trace_id: str           
+    request_id: Optional[Union[str, int]] = None
+    content: Optional[Any] = None
+    raw_content: Optional[str] = None  # Store initial LLM output
+    retried:  Optional[Any] = None, 
+    attempt_count:  Optional[Any] = None,
+    operation_name: Optional[str] = None
+    usage: Dict[str, Any] = field(default_factory=dict)
+    elapsed_time: Optional[float] = None
+    error_message: Optional[str] = None
+    model: Optional[str] = None
+    formatted_prompt: Optional[str] = None
+    unformatted_prompt: Optional[str] = None
+    response_type: Optional[str] = None
+    pipeline_steps_results: List[PipelineStepResult] = field(default_factory=list)
+    # rpm tpm related logs
+    rpm_at_the_beginning: Optional[int] = None
+    rpm_at_the_end: Optional[int] = None
+    tpm_at_the_beginning: Optional[int] = None
+    tpm_at_the_end: Optional[int] = None
+    rpm_waited: Optional[bool] = None
+    rpm_wait_loops: Optional[int] = None
+    rpm_waited_ms: Optional[int] = None
+    tpm_waited: Optional[bool] = None
+    tpm_wait_loops: Optional[int] = None
+    tpm_waited_ms: Optional[int] = None
+    total_invoke_duration_ms:  Optional[Any] = None, 
+    total_backoff_ms: Optional[Any] = None, 
+    backoff: BackoffStats = field(default_factory=BackoffStats)
+
+    # detailed timestamp logs  requested_at, enqueued_at... 
+    timestamps: Optional[EventTimestamps] = None
+    # complete copy of the generation_request
+    generation_request: Optional[GenerationRequest] = None
+```
+### Step 3.1: The common `GenerationResult` fields
+
+Beyond `res.content`, you can pull:
+
+- **Success flag**:  
+  ```python
+  if not res.success:
+      print("LLM call failed:", res.error_message)
+   ```
+
+* **Token and cost breakdown**:
+
+  ```python
+  print("Input tokens:", res.usage["input_tokens"])
+  print("Output tokens:", res.usage["output_tokens"])
+  print("Total cost (USD):", res.usage["total_cost"])
+  ```
+
+* **Latency and backoff info**:
+
+  ```python
+  print("LLM round-trip (ms):", res.total_invoke_duration_ms)
+  print("Client backoff (ms):", res.total_backoff_ms)
+  ```
+
+* **Rate-limit / concurrency stats**:
+
+  ```python
+  print("RPM at start:", res.rpm_at_the_beginning)
+  print("RPM at end:  ", res.rpm_at_the_end)
+  print("Did RPM block?:", res.rpm_waited, "| loops:", res.rpm_wait_loops)
+  ```
+
+* **Pipeline step details** (if you used a pipeline):
+
+  ```python
+  for step in res.pipeline_steps_results:
+      print(f"{step.step_type} → success? {step.success}.")
+  ```
+
+
+
 
 
 # Postprocessing Pipeline  
@@ -201,7 +286,9 @@ The **SemanticIsolator** postprocessing step fixes this by running a second quer
 
 ## Method 2: ConvertToDict
 
-When you ask an LLM to output a JSON-like response, you typically convert it into a dictionary (for example, using `json.loads()`). However, if the output is missing quotes or otherwise isn’t strictly valid JSON, `json.loads()` will fail. **ConvertToDict** leverages the `string2dict` module to handle these edge cases—even with missing quotes or minor formatting issues, it can parse the string into a proper Python `dict`.
+When you ask an LLM to output a JSON-like response, you typically convert it into a dictionary (for example, using `json.loads()`). However, if the output is missing quotes or otherwise isn’t strictly valid JSON, `json.loads()` will fail.
+
+ **ConvertToDict** pipeline leverages the `string2dict` module to handle these edge cases—even with missing quotes or minor formatting issues, it can parse the string into a proper Python `dict`.
 
 Below are some LLM outputs where `json.loads()` fails but **ConvertToDict** succeeds:
 
@@ -226,10 +313,10 @@ Usage :
 ```python
 pipeline_config = [
            
-             {
-                'type': 'ConvertToDict', 
-                'params': {}
-             } 
+     {
+        'type': 'ConvertToDict', 
+        'params': {}
+     } 
 ]
 
 ```
@@ -250,8 +337,8 @@ add the following to your pipeline config:
 
 ```
   {
-                'type': 'ExtractValue',  
-                 'params': {'key': 'answer'}
+       'type': 'ExtractValue',  
+       'params': {'key': 'answer'}
  }
 ```
 
@@ -272,19 +359,19 @@ A common scenario is to chain multiple pipeline steps to extract a specific valu
 
 ```
 pipeline_config = [
-            {
-                'type': 'SemanticIsolation',   
-                'params': { 'semantic_element_for_extraction': 'SQL code' }
-            }, 
-            {
-                'type': 'ConvertToDict', 
-                'params': {}
-             },
-            {
-                'type': 'ExtractValue',      
-                'params': {'key': 'answer'}
-            }
-          ]
+        {
+            'type': 'SemanticIsolation',   
+            'params': { 'semantic_element_for_extraction': 'SQL code' }
+        }, 
+        {
+            'type': 'ConvertToDict', 
+            'params': {}
+          },
+        {
+            'type': 'ExtractValue',      
+            'params': {'key': 'answer'}
+        }
+      ]
 
 ```
 
@@ -317,7 +404,7 @@ class MyLLMService(BaseLLMService):
           return generation_result
 ```
 
-# Translating a 100 pages book with various configs 
+# (Not Done) Translating a 100 pages book with various configs and comparing the results
 
 For this experiement we are using a text which is already chunked into pieces
 
