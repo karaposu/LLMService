@@ -26,6 +26,7 @@ from llmservice.schemas import UsageStats
 from .utils import _now_dt
 import uuid, time, asyncio
 from llmservice.gates import RpmGate,TpmGate
+from llmservice.debug_tools import timed 
 
 
 
@@ -33,7 +34,6 @@ from llmservice.gates import RpmGate,TpmGate
 class BaseLLMService(ABC):
   
     
-
     def __init__(
         self,
         *,
@@ -111,6 +111,9 @@ class BaseLLMService(ABC):
     # ------------------------------------------------------------------ #
     #  Generation entry points
     # ------------------------------------------------------------------ #
+
+
+    @timed("execute_generation") 
     def execute_generation(
         self,
         generation_request: GenerationRequest,
@@ -218,7 +221,7 @@ class BaseLLMService(ABC):
     
 
 
-
+    @timed("execute_generation_async")
     async def execute_generation_async(
         self,
         generation_request: GenerationRequest,
@@ -425,8 +428,8 @@ def main():
             prompt= f"bring me the capital of this country: {user_input}"
             generation_request = GenerationRequest(
                 formatted_prompt=prompt,
-                # model="gpt-4o-mini",  
-                model="gpt-4.1-nano",  
+                model="gpt-4o-mini",  
+                # model="gpt-4.1-nano",  
             )
             generation_result = self.execute_generation(generation_request)
             return generation_result

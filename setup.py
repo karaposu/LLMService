@@ -17,6 +17,7 @@ setup(
         'langchain' , # for PromptTemplate, get_template_variables
         'langchain-community', # for Ollama
         'langchain-openai', # for ChatOpenAI
+        'langchain-ollama', 
         'proteas',
         'string2dict',
         'indented_logger',

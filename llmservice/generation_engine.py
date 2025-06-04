@@ -18,6 +18,8 @@ from .schemas import GenerationRequest, GenerationResult,  PipelineStepResult, B
 from .schemas import EventTimestamps
 from .utils import _now_dt
 
+from llmservice.debug_tools import timed 
+
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +75,7 @@ Provide the answer strictly in the following JSON format, do not combine anythin
     
     
 
-
+    @timed("invoke_async")
     async def generate_async(
         self,
         formatted_prompt: Optional[str] = None,
@@ -83,6 +85,9 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         request_id: Optional[Union[str, int]] = None,
         operation_name: Optional[str] = None
     ) -> GenerationResult:
+        
+        if model_name:
+           self.llm_handler.change_model(model_name)
         
 
         trace_id = self._new_trace_id()
@@ -462,7 +467,7 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         tmpl = PromptTemplate.from_template(unformatted_template)  # type: ignore
         return tmpl.format(**data_for_placeholders)  # type: ignore
         
-    
+    @timed("invoke_sync")      
     def generate(
         self,
         formatted_prompt: Optional[str] = None,
@@ -484,6 +489,9 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         :return: GenerationResult object.
         """
         # Enforce either-or contract
+        
+        if model_name:
+           self.llm_handler.change_model(model_name)
         
         trace_id = self._new_trace_id() 
         

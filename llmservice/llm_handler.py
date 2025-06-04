@@ -18,7 +18,8 @@ from .schemas import ErrorType
 
 from langchain_openai import ChatOpenAI
 from langchain.chains import LLMChain
-from langchain_community.llms import Ollama
+# from langchain_community.llms import Ollama
+from langchain_ollama import OllamaLLM as Ollama
 from openai import RateLimitError , PermissionDeniedError
 
 #
@@ -98,8 +99,14 @@ class LLMHandler:
         return model_name in gpt_model_list
 
     
+    # def change_model(self, model_name):
+    #     self.llm = self._initialize_llm(model_name)
+
     def change_model(self, model_name):
+        # 1) update the internal model reference
         self.llm = self._initialize_llm(model_name)
+        # 2) **also** update the handler’s own model_name attribute
+        self.model_name = model_name
 
    
     def _init_meta(self) -> Dict[str, Any]:
@@ -395,7 +402,7 @@ class LLMHandler:
                         attempt_number  = n,
                         invoke_start_at = start,
                         invoke_end_at   = end,
-                        backoff_after   = backoff,
+                        backoff_after_ms   = backoff,
                         error_message   = str(e)
                     ))
                     raise

@@ -1,0 +1,272 @@
+
+# auto-categorization-trigger
+categories:
+  - Food & Dining:
+      helpers:
+        # Identifier
+        keyword_identifier: ["xyz"]
+        text_rules_for_llm: []
+        description: ""
+      subcategories:
+        - Groceries:
+            helpers:
+              keyword_identifier: ["SOSEDI", "MJET", "m-jet"]
+              text_rules_for_llm: []
+              description: ""
+            subcategories: []
+        - Restaurants:
+            helpers:
+              keyword_identifier: ["WWW.PZZ.BY", "HOT DONER", "CHAYHONA"]
+              text_rules_for_llm: []
+              description: ""
+            subcategories: []
+        - Coffee:
+            helpers:
+              keyword_identifier: ["KOFEYNYA", "GRAY HOUSE"]
+              text_rules_for_llm:
+                - "If record contains words like coffea or KAFE, it must be categorized as Coffee."
+              description: ""
+            subcategories: []
+        - Takeout:
+            helpers:
+              keyword_identifier: []
+              text_rules_for_llm: []
+              description: ""
+            subcategories: []
+
+  - Utilities:
+      helpers:
+        keyword_identifier: ["vvc"]
+        text_rules_for_llm: []
+        description: ""
+      subcategories:
+        - Electricity and Water and Gas:
+            helpers:
+              keyword_identifier: []
+              text_rules_for_llm: []
+              description: ""
+            subcategories: []
+        - Internet and Mobile:
+            helpers:
+              keyword_identifier: ["Türk Telekom Mobil"]
+              text_rules_for_llm: []
+              description: ""
+            subcategories: []
+
+  - Accommodation:
+      helpers:
+        keyword_identifier: []
+        text_rules_for_llm: []
+        description: ""
+      subcategories:
+        - Accommodation:
+            helpers:
+              keyword_identifier: []
+              text_rules_for_llm: []
+              description: ""
+            subcategories: []
+
+  - Incoming P2P Transfers:
+      helpers:
+        keyword_identifier: []
+        text_rules_for_llm: []
+        description: ""
+      subcategories:
+        - Incoming Money:
+            helpers:
+              keyword_identifier: []
+              text_rules_for_llm: []
+              description: ""
+            subcategories: []
+
+  - Outgoing P2P Transfers:
+      helpers:
+        keyword_identifier: []
+        text_rules_for_llm: []
+        description: ""
+      subcategories:
+        - Outgoing Money:
+            helpers:
+              keyword_identifier: []
+              text_rules_for_llm:
+                - "Must be towards a person, not to a company name."
+              description: ""
+            subcategories: []
+
+  - Cash Withdrawal:
+      helpers:
+        keyword_identifier: []
+        text_rules_for_llm: []
+        description: ""
+      subcategories:
+        - Cash Withdrawal:
+            helpers:
+              keyword_identifier: []
+              text_rules_for_llm: []
+              description: ""
+            subcategories: []
+
+  - Cash Deposit:
+      helpers:
+        keyword_identifier: []
+        text_rules_for_llm: []
+        description: ""
+      subcategories:
+        - Cash Deposit:
+            helpers:
+              keyword_identifier: []
+              text_rules_for_llm: []
+              description: ""
+            subcategories: []
+
+  - Transportation:
+      helpers:
+        keyword_identifier: []
+        text_rules_for_llm: []
+        description: ""
+      subcategories:
+        - Fuel:
+            helpers:
+              keyword_identifier: []
+              text_rules_for_llm: []
+              description: ""
+            subcategories: []
+        - Taxi:
+            helpers:
+              keyword_identifier: ["YANDEX.GO"]
+              text_rules_for_llm: []
+              description: ""
+            subcategories: []
+        - Travel Tickets:
+            helpers:
+              keyword_identifier: ["HAVAIST"]
+              text_rules_for_llm: []
+              description: ""
+            subcategories: []
+        - Public Transportation:
+            helpers:
+              keyword_identifier: ["IGA", "ISPARK"]
+              text_rules_for_llm: []
+              description: ""
+            subcategories: []
+        - Vehicle Maintenance:
+            helpers:
+              keyword_identifier: []
+              text_rules_for_llm: []
+              description: ""
+            subcategories: []
+        - Car Payments:
+            helpers:
+              keyword_identifier: []
+              text_rules_for_llm: []
+              description: ""
+            subcategories: []
+
+  - Healthcare:
+      helpers:
+        keyword_identifier: []
+        text_rules_for_llm: []
+        description: ""
+      subcategories:
+        - Medical Bills:
+            helpers:
+              keyword_identifier: []
+              text_rules_for_llm: []
+              description: ""
+            subcategories: []
+        - Health Insurance:
+            helpers:
+              keyword_identifier: []
+              text_rules_for_llm: []
+              description: ""
+            subcategories: []
+        - Medications:
+            helpers:
+              keyword_identifier: ["ECZANE", "APTEKA"]
+              text_rules_for_llm: []
+              description: ""
+            subcategories: []
+
+  - Retail Purchases:
+      helpers:
+        keyword_identifier: []
+        text_rules_for_llm: []
+        description: ""
+      subcategories:
+        - Clothes:
+            helpers:
+              keyword_identifier: []
+              text_rules_for_llm: []
+              description: ""
+            subcategories: []
+        - Technology Items:
+            helpers:
+              keyword_identifier: []
+              text_rules_for_llm:
+                - "If bill is from APPLE and cost is less than $40, it should be classified as an online subscription."
+                - "If bill is from Getir and cost is more than $50, it should be classified as retail purchases."
+              description: ""
+            subcategories: []
+        - Other:
+            helpers:
+              keyword_identifier: []
+              text_rules_for_llm: []
+              description: ""
+            subcategories: []
+
+  - Personal Care:
+      helpers:
+        keyword_identifier: []
+        text_rules_for_llm: []
+        description: ""
+      subcategories:
+        - Personal Grooming:
+            helpers:
+              keyword_identifier: []
+              text_rules_for_llm: []
+              description: ""
+            subcategories: []
+        - Fitness:
+            helpers:
+              keyword_identifier: []
+              text_rules_for_llm: []
+              description: ""
+            subcategories: []
+
+  - Leisure and Activities in Real Life:
+      helpers:
+        keyword_identifier: []
+        text_rules_for_llm: []
+        description: ""
+      subcategories:
+        - Movies:
+            helpers:
+              keyword_identifier: []
+              text_rules_for_llm: []
+              description: ""
+            subcategories: []
+        - Concerts:
+            helpers:
+              keyword_identifier: []
+              text_rules_for_llm: []
+              description: ""
+            subcategories: []
+
+  - Online Subscriptions & Services:
+      helpers:
+        keyword_identifier: []
+        text_rules_for_llm: []
+        description: ""
+      subcategories:
+        - Streaming & Digital Subscriptions:
+            helpers:
+              keyword_identifier: ["NETFLIX", "HULU", "AMAZON PRIME", "youtube+", "SPOTIFY", "APPLE MUSIC", "GOOGLE PLAY"]
+              text_rules_for_llm: []
+              description: ""
+            subcategories: []
+        - Cloud Server Payments:
+            helpers:
+              keyword_identifier: ["AWS", "AMAZON WEB SERVICES", "GOOGLE CLOUD", "GCP", "GOOGLE CLOUD PLATFORM", "DIGITALOCEAN"]
+              text_rules_for_llm: []
+              description: ""
+            subcategories: []
