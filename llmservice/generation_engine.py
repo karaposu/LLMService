@@ -214,7 +214,7 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         
         # 5) Run any post‐processing pipeline (if configured)
         if generation_request.pipeline_config:
-            generation_result = self.execute_pipeline_async(
+            generation_result = await self.execute_pipeline_async(
                 generation_result,
                 generation_request.pipeline_config
             )
