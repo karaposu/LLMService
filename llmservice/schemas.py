@@ -283,6 +283,17 @@ class PipelineStepResult:
     error_message: Optional[str] = None
     meta: Dict[str, Any] = field(default_factory=dict)
 
+    def to_dict(self) -> Dict[str, Any]:
+        # Convert the dataclass fields into a JSON-friendly dict
+        return {
+            "step_type":       self.step_type,
+            "success":         self.success,
+            "content_before":  self.content_before,
+            "content_after":   self.content_after,
+            "error_message":   self.error_message,
+            "meta":            self.meta,
+        }
+
 
 
 
