@@ -334,21 +334,33 @@ class GenerationResult:
             name  = f.name
             value = getattr(self, name)
 
-            # ---------- pretty-print dicts & lists ----------------------- #
-            if isinstance(value, (dict, list)):
-                pretty   = json.dumps(value, indent=4)
+            # 1) Special-case pipeline_steps_results
+            if name == "pipeline_steps_results" and isinstance(value, list):
+                # Convert each step object to dict, then pretty-print JSON
+                steps = [step.to_dict() for step in value]
+                pretty = json.dumps(steps, indent=4, ensure_ascii=False)
+                # indent each line by two spaces
+                lines.append(f"{name}:")
+                for ln in pretty.splitlines():
+                    lines.append(f"  {ln}")
+                continue
+
+            # 2) Next, pretty-print dicts & lists (but now pipeline is already handled)
+            if isinstance(value, dict) or isinstance(value, list):
+                pretty   = json.dumps(value, indent=4, ensure_ascii=False)
                 indented = "\n".join("  " + line for line in pretty.splitlines())
                 lines.append(f"{name}:\n{indented}")
+                continue
 
-            # ---------- pretty-print EventTimestamps --------------------- #
-            elif isinstance(value, EventTimestamps):
-                ts_str   = str(value)                     # already newline-separated
+            # 3) EventTimestamps
+            if isinstance(value, EventTimestamps):
+                ts_str   = str(value)
                 indented = "\n".join("  " + line for line in ts_str.splitlines())
                 lines.append(f"{name}:\n{indented}")
+                continue
 
-            # ---------- default: show as is ------------------------------ #
-            else:
-                lines.append(f"{name}: {value}")
+            # 4) Fallback for everything else
+            lines.append(f"{name}: {value}")
 
         return "\n".join(lines)
     
