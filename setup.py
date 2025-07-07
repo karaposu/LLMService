@@ -6,7 +6,7 @@ import os
 setup(
     # name='LLM',  # Package name
     name='llmservice',  # Package name
-    version='0.2.6.2',  # Version of your package
+    version='0.2.7.0',  # Version of your package
     author='Enes Kuzucu',  # Your name
     
     description='A lightweight, production-ready service layer for modular, rate-aware LLM integrations',
@@ -18,7 +18,7 @@ setup(
         'langchain-community', # for Ollama
         'langchain-openai', # for ChatOpenAI
         'langchain-ollama', 
-        'proteas',
+        # 'proteas',
         'string2dict',
         'indented_logger',
         'pyyaml',

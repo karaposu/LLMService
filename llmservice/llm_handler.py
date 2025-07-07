@@ -1,503 +1,584 @@
-# here is llm_handler.py
+# llmservice/llm_handler.py
+"""
+Refactored LLM Handler with clean provider abstraction.
+"""
 
-
-# to run python -m llmservice.llm_handler
 import os
-from pathlib import Path
 import logging
-from dotenv import load_dotenv
-from tenacity import retry, stop_after_attempt, wait_random_exponential, retry_if_exception_type, RetryCallState, AsyncRetrying, Retrying
-
-from typing import Any, List, Tuple, Dict, Optional
-import httpx
-import asyncio
+from typing import Any, Dict, List, Optional, Tuple, Type
 from datetime import timedelta
-from .schemas import InvokeResponseData, InvocationAttempt
-from .schemas import ErrorType
+import asyncio
+
+# Third-party imports
+from dotenv import load_dotenv
+from tenacity import (
+    Retrying, AsyncRetrying, retry_if_exception_type, 
+    stop_after_attempt, wait_random_exponential
+)
+import httpx
+from openai import RateLimitError
+
+# Local imports
+from .schemas import LLMCallRequest, InvokeResponseData, InvocationAttempt, ErrorType
 from .utils import _now_dt
+from .providers import BaseLLMProvider, OpenAIProvider, OllamaProvider
 
-from langchain_openai import ChatOpenAI
-from langchain.chains import LLMChain
-# from langchain_community.llms import Ollama
-from langchain_ollama import OllamaLLM as Ollama
-from openai import RateLimitError , PermissionDeniedError
+# Load environment variables
+load_dotenv()
 
-#
-# LangChainDeprecationWarning: The class `Ollama` was deprecated in LangChain 0.3.1 and will be removed in
-# 1.0.0. An updated version of the class exists in the :class:`~langchain-ollama package and should be used instead. To
-# use it run `pip install -U :class:`~langchain-ollama` and
-# import as `from :class:`~langchain_ollama import OllamaLLM``.
-
-
-
-# @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(6))
-
+# Configure logging to reduce noise
 logging.getLogger("langchain_community.llms").setLevel(logging.WARNING)
 logging.getLogger("openai").setLevel(logging.ERROR)
 logging.getLogger("httpx").setLevel(logging.ERROR)
 logging.getLogger('httpcore').setLevel(logging.WARNING)
 
-load_dotenv()
-openai_api_key = os.getenv("OPENAI_API_KEY")
-
-
-gpt_models_cost = {
-    'gpt-4o-search-preview':    {'input_token_cost': 2.5e-6,  'output_token_cost': 10e-6},
-    'gpt-4o-mini-search-preview': {'input_token_cost': 2.5e-6,  'output_token_cost': 0.6e-6},
-    'gpt-4.5-preview':          {'input_token_cost': 75e-6,   'output_token_cost': 150e-6},
-    'gpt-4.1-nano':             {'input_token_cost': 0.1e-6,  'output_token_cost': 0.4e-6},
-    'gpt-4.1-mini':             {'input_token_cost': 0.4e-6,  'output_token_cost': 1.6e-6},
-    'gpt-4.1':                  {'input_token_cost': 2e-6,    'output_token_cost': 8e-6},
-    'gpt-4o':                   {'input_token_cost': 2.5e-6,  'output_token_cost': 10e-6},
-    'gpt-4o-audio-preview':     {'input_token_cost': 2.5e-6,  'output_token_cost': 10e-6},
-    'gpt-4o-mini':              {'input_token_cost': 0.15e-6, 'output_token_cost': 0.6e-6},
-    'o1':                       {'input_token_cost': 15e-6,   'output_token_cost': 60e-6},
-    'o1-pro':                   {'input_token_cost': 150e-6,  'output_token_cost': 600e-6},
-    'o3':                       {'input_token_cost': 10e-6,   'output_token_cost': 40e-6},
-    'o4-mini':                  {'input_token_cost': 1.1e-6,  'output_token_cost': 4.4e-6},
-}
-
-
-gpt_model_list= list(gpt_models_cost.keys())
-
-
-import time
-from datetime import datetime, timezone
-
+# ============================================================================
+# Main LLM Handler
+# ============================================================================
 
 class LLMHandler:
-    def __init__(self, model_name: str, system_prompt=None, logger=None):
-        self.llm = self._initialize_llm(model_name)
-        self.system_prompt = system_prompt
-        self.model_name=model_name
-        self.logger = logger if logger else logging.getLogger(__name__)
-
-        # Set the level of the logger
-        self.logger.setLevel(logging.DEBUG)
-        self.max_retries = 2  # Set the maximum retries allowed
-
-        self.OPENAI_MODEL = False
-        self._llm_cache = {}
-
-        if self.is_it_gpt_model(model_name):
-            self.OPENAI_MODEL= True
-
-    def is_it_gpt_model(self, model_name):
-        # return model_name in ["gpt-4o-mini", "gpt-4", "gpt-4o", "gpt-3.5"]
-        return model_name in gpt_model_list
-
+    """Clean, provider-agnostic LLM handler with automatic provider detection."""
     
-    # def change_model(self, model_name):
-    #     self.llm = self._initialize_llm(model_name)
-
-    def change_model(self, model_name):
-        # 1) update the internal model reference
-        self.llm = self._initialize_llm(model_name)
-        # 2) **also** update the handler’s own model_name attribute
+    # Provider registry
+    PROVIDERS: Dict[str, Type[BaseLLMProvider]] = {
+        "openai": OpenAIProvider,
+        "ollama": OllamaProvider,
+    }
+    
+    def __init__(self, model_name: str, logger: Optional[logging.Logger] = None):
         self.model_name = model_name
-
-   
-    def _init_meta(self) -> Dict[str, Any]:
-        """
-        Return a fresh metadata dict for token‐usage and cost:
-            {
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "total_tokens": 0,
-                "input_cost": 0,
-                "output_cost": 0,
-                "total_cost": 0,
-            }
-        """
-        return {
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "total_tokens": 0,
-            "input_cost": 0,
-            "output_cost": 0,
-            "total_cost": 0,
-        }
-
+        self.logger = logger or logging.getLogger(__name__)
+        self.max_retries = 2
+        
+        # Auto-detect and initialize the appropriate provider
+        provider_name = self._detect_provider(model_name)
+        provider_class = self.PROVIDERS[provider_name]
+        self.provider = provider_class(model_name, logger)
+        
+        self.logger.debug(f"Initialized LLMHandler with {provider_name} provider for model {model_name}")
     
-
-    def _initialize_llm(self, model_name: str):
-
-        if self.is_it_gpt_model(model_name):
-            if model_name== "gpt-4o-search-preview":
-               
-               return ChatOpenAI(api_key=os.getenv("OPENAI_API_KEY"),
-                                model_name=model_name,
-                                model_kwargs={
-                                    "web_search_options": {
-                                        "search_context_size": "high"
-                                    }
-                                }
-
-                                 
-                                )
-            else:
-                return ChatOpenAI(api_key=os.getenv("OPENAI_API_KEY"),
-                                model_name=model_name,
-                                # max_tokens=15000
-                                )
-        elif model_name=="custom":
-            ollama_llm=""
-            return ollama_llm
+    def _detect_provider(self, model_name: str) -> str:
+        """Auto-detect which provider to use for a given model."""
+        for provider_name, provider_class in self.PROVIDERS.items():
+            if provider_class.supports_model(model_name):
+                return provider_name
+        
+        # Fallback logic for unknown models
+        if model_name.startswith(("gpt-", "o1", "o3", "o4")):
+            self.logger.warning(f"Unknown OpenAI model '{model_name}', using OpenAI provider")
+            return "openai"
         else:
-            if not self._is_ollama_model_downloaded(model_name):
-                print(f"The Ollama model '{model_name}' is not downloaded.")
-                print(f"To download it, run the following command:")
-                print(f"ollama pull {model_name}")
-                raise ValueError(f"The Ollama model '{model_name}' is not downloaded.")
-            return Ollama(model=model_name)
-
-    def _is_ollama_model_downloaded(self, model_name: str) -> bool:
-        #todo check OLLAMA_MODELS path
-
-        # # Define the Ollama model directory (replace with actual directory)
-        # ollama_model_dir = Path("~/ollama/models")  # Replace with the correct path
-        # model_file = ollama_model_dir / f"{model_name}.model"  # Adjust the file extension if needed
-        #
-        # # Check if the model file exists
-       # model_file.exists()#
-        return  True
+            self.logger.warning(f"Unknown model '{model_name}', using Ollama provider")
+            return "ollama"
     
-
-    
-    
-    def _invoke_impl(self, prompt: str) -> Tuple[Any, bool, Optional[ErrorType]]:
-   
-        """
-        Your original logic, unchanged. Returns (response, success)
-        or raises to trigger a retry.
-        """
-        try:
-            if self.system_prompt:
-                response = self.llm.invoke(prompt=prompt, context=self.system_prompt)
-            else:
-                response = self.llm.invoke(prompt)
-            return response, True, None
-
-        except RateLimitError as e:
-            error_message = str(e)
-            error_code = getattr(e, "code", None)
-            # existing insufficient_quota fallback
-            if not error_code and hasattr(e, "json_body") and e.json_body:
-                error_code = e.json_body.get("error", {}).get("code")
-            if not error_code and "insufficient_quota" in error_message:
-                error_code = "insufficient_quota"
-            
-            if error_code == "insufficient_quota":
-                self.logger.error("OpenAI credit is finished.")
-                return "OpenAI credit is finished.", False, ErrorType.INSUFFICIENT_QUOTA
-
-            self.logger.warning(f"RateLimitError occurred: {error_message}. Retrying...")
-            # if last retry, return fallback
-            raise
-
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 429:
-                self.logger.warning("Rate limit exceeded: 429 Too Many Requests. Retrying...")
-                raise
-            self.logger.error(f"HTTP error occurred: {e}")
-            raise
-
-        except PermissionDeniedError as e:
-            error_message = str(e)
-            error_code = getattr(e, "code", None)
-            if error_code == "unsupported_country_region_territory":
-             
-                self.logger.error("Country, region, or territory not supported.")
-                return "Country, region, or territory not supported.", False, ErrorType.UNSUPPORTED_REGION
-            
-            self.logger.error(f"PermissionDeniedError occurred: {error_message}")
-            raise
-
-        except Exception as e:
-            self.logger.error(f"An error occurred: {e}")
-            raise
-
-
-    async def _invoke_async_impl(self, prompt: str) -> Tuple[Any, bool]:
-        """
-        Core async logic, exactly your existing code minus the @retry decorator.
-        Returns (response, True) or raises to trigger a retry.
-        """
-        if not hasattr(self.llm, "ainvoke"):
-            raise NotImplementedError(f"{type(self.llm).__name__} does not support async ainvoke")
-
-        try:
-            response = await self.llm.ainvoke(prompt)
-            return response, True, None
+    def change_model(self, model_name: str) -> None:
+        """Switch to a different model (potentially different provider)."""
+        if model_name == self.model_name:
+            return  # No change needed
         
-        except RateLimitError as e:
-            # replicate your existing RateLimitError handling:
-            msg = str(e)
-            code = getattr(e, "code", None)
-            if not code and hasattr(e, "json_body") and e.json_body:
-                code = e.json_body.get("error", {}).get("code")
-            if not code and "insufficient_quota" in msg:
-                code = "insufficient_quota"
-            if code == "insufficient_quota":
-                self.logger.error("OpenAI credit is finished.")
-                return "OpenAI credit is finished.", False, ErrorType.INSUFFICIENT_QUOTA
-            self.logger.warning(f"RateLimitError: {msg}. Retrying…")
-            raise
-
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 429:
-                self.logger.warning("429 Too Many Requests. Retrying…")
-                raise
-            self.logger.error(f"HTTP error: {e}")
-            raise
-
-        except PermissionDeniedError as e:
-            msg = str(e)
-            code = getattr(e, "code", None)
-            if code == "unsupported_country_region_territory":
-                self.logger.error("Territory not supported.")
-                return "Country/region not supported.", False, ErrorType.UNSUPPORTED_REGION
-            self.logger.error(f"PermissionDeniedError: {msg}")
-            raise
-
-        except Exception as e:
-            self.logger.error(f"Async invoke error: {e}")
-            raise
-
-
-
-
-    def invoke(self, prompt: str) -> InvokeResponseData:
-        """
-        Synchronous invoke that records every attempt in `attempts`.
-        """
-        attempts: List[InvocationAttempt] = []
+        self.model_name = model_name
+        provider_name = self._detect_provider(model_name)
+        provider_class = self.PROVIDERS[provider_name]
+        self.provider = provider_class(model_name, self.logger)
+        
+        # self.logger.debug(f"Changed to model {model_name} with {provider_name} provider")
+    
+    def process_call_request(self, request: LLMCallRequest) -> InvokeResponseData:
+        """Main entry point for synchronous LLM calls."""
+        # Switch model if needed
+        if request.model_name and request.model_name != self.model_name:
+            self.change_model(request.model_name)
+        
+        # Convert request to provider-specific payload
+        payload = self.provider.convert_request(request)
+        
+        # Execute with retries
+        attempts = []
         final_response = None
-        final_success  = False
+        final_success = False
+        final_error_type = None
         
         try:
-                for attempt in Retrying(
-                    retry=retry_if_exception_type((httpx.HTTPStatusError, RateLimitError)),
-                    stop=stop_after_attempt(self.max_retries),
-                    wait=wait_random_exponential(min=1, max=60),
-                    reraise=True
-                ):
-                    with attempt:
-                        n = attempt.retry_state.attempt_number
-                        start = _now_dt()
-                        try:
-                            resp, success, error_type = self._invoke_impl(prompt)
-                            final_response = resp
-                            final_success  = success
-                        except Exception as e:
-                            # Tenacity will catch and retry if it matches your retry predicate
-                            # We still want to record this attempt's timing & error
-                            end = _now_dt()
-                            backoff = timedelta(seconds=attempt.retry_state.next_action.sleep) \
-                                    if attempt.retry_state.next_action else None
-                            attempts.append(InvocationAttempt(
-                                attempt_number  = n,
-                                invoke_start_at = start,
-                                invoke_end_at   = end,
-                                backoff_after_ms   = backoff,
-                                error_message   = str(e)
-                            ))
-                            raise  # let Tenacity handle retrying
-                        else:
-                            # successful attempt
-                            end = _now_dt()
-                            # no backoff_after on a success
-                            attempts.append(InvocationAttempt(
-                                attempt_number  = n,
-                                invoke_start_at = start,
-                                invoke_end_at   = end,
-                                backoff_after_ms   = None,
-                                error_message   = None
-                            ))
-                
-
-                meta=self._init_meta()
-
-                # print("final_response: ",final_response)
-                if final_success:
-
-                    in_cost, out_cost = self.cost_calculator(
-                            final_response.usage_metadata["input_tokens"],  final_response.usage_metadata["output_tokens"], self.model_name or self.llm_handler.model_name
-                        )
+            for attempt in Retrying(
+                retry=retry_if_exception_type((httpx.HTTPStatusError, RateLimitError)),
+                stop=stop_after_attempt(self.max_retries),
+                wait=wait_random_exponential(min=1, max=60),
+                reraise=True
+            ):
+                with attempt:
+                    n = attempt.retry_state.attempt_number
+                    start = _now_dt()
                     
-                    total_cost= in_cost+ out_cost
-
-                
-
-
-                    meta["input_tokens"]  =  final_response.usage_metadata["input_tokens"]
-                    meta["output_tokens"] =  final_response.usage_metadata["output_tokens"]
-                    meta["total_tokens"]  =  final_response.usage_metadata["output_tokens"] + final_response.usage_metadata["input_tokens"]
-                    
-                    meta["input_cost"]= in_cost
-                    meta["output_cost"]= out_cost
-                    meta["total_cost"]= total_cost
-
-                
-                return InvokeResponseData(
-                    success = final_success,
-                    response = final_response,
-                    attempts = attempts, 
-                    usage= meta,
-                    error_type=error_type
-                )
-        
+                    try:
+                        resp, success, error_type = self.provider._invoke_impl(payload)
+                        final_response = resp
+                        final_success = success
+                        final_error_type = error_type
+                    except Exception as e:
+                        end = _now_dt()
+                        backoff = None
+                        if attempt.retry_state.next_action:
+                            backoff = timedelta(seconds=attempt.retry_state.next_action.sleep)
+                        
+                        attempts.append(InvocationAttempt(
+                            attempt_number=n,
+                            invoke_start_at=start,
+                            invoke_end_at=end,
+                            backoff_after_ms=backoff,
+                            error_message=str(e)
+                        ))
+                        raise
+                    else:
+                        end = _now_dt()
+                        attempts.append(InvocationAttempt(
+                            attempt_number=n,
+                            invoke_start_at=start,
+                            invoke_end_at=end,
+                            backoff_after_ms=None,
+                            error_message=None
+                        ))
+            
+            # Build usage metadata with costs
+            usage = self._build_usage_metadata(final_response, final_success)
+            
+            return InvokeResponseData(
+                success=final_success,
+                response=final_response,
+                attempts=attempts,
+                usage=usage,
+                error_type=final_error_type
+            )
+            
         except Exception as final_exc:
-            # All retries exhausted, Tenacity has re-raised the last exception.
-            # You can turn it into a “failed” InvokeResponseData here:
-            meta = self._init_meta()
+            # All retries exhausted
+            self.logger.error(f"All retries exhausted for model {self.model_name}: {final_exc}")
+            usage = self._init_empty_usage()
             return InvokeResponseData(
                 success=False,
                 response=None,
                 attempts=attempts,
-                usage=meta,
-                error_type= ErrorType.INSUFFICIENT_QUOTA
+                usage=usage,
+                error_type=final_error_type
             )
-                
-
-
-    async def invoke_async(self, prompt: str) -> InvokeResponseData:
-        """
-        Asynchronous invoke with identical structure.
-        """
-        attempts: List[InvocationAttempt] = []
+    
+    async def process_call_request_async(self, request: LLMCallRequest) -> InvokeResponseData:
+        """Main entry point for asynchronous LLM calls."""
+        # Switch model if needed
+        if request.model_name and request.model_name != self.model_name:
+            self.change_model(request.model_name)
+        
+        # Convert request to provider-specific payload
+        payload = self.provider.convert_request(request)
+        
+        # Execute with retries
+        attempts = []
         final_response = None
-        final_success  = False
-
-        async for attempt in AsyncRetrying(
-            retry=retry_if_exception_type((httpx.HTTPStatusError, RateLimitError)),
-            stop=stop_after_attempt(self.max_retries),
-            wait=wait_random_exponential(min=1, max=60),
-            reraise=True
-        ):
-            with attempt:
-                n = attempt.retry_state.attempt_number
-                start = _now_dt()
-                try:
-                    resp, success,  error_type = await self._invoke_async_impl(prompt)
-                    final_response = resp
-                    final_success  = success
-                except Exception as e:
-                    end = _now_dt()
-                    backoff = timedelta(seconds=attempt.retry_state.next_action.sleep) \
-                              if attempt.retry_state.next_action else None
-                    attempts.append(InvocationAttempt(
-                        attempt_number  = n,
-                        invoke_start_at = start,
-                        invoke_end_at   = end,
-                        backoff_after_ms   = backoff,
-                        error_message   = str(e)
-                    ))
-                    raise
-                else:
-                    end = _now_dt()
-                    attempts.append(InvocationAttempt(
-                        attempt_number  = n,
-                        invoke_start_at = start,
-                        invoke_end_at   = end,
-                        backoff_after_ms   = None,
-                        error_message   = None
-                    ))
-         
-        meta=self._init_meta()
-
-
-        if final_success:
-            in_cost, out_cost = self.cost_calculator(
-                    final_response.usage_metadata["input_tokens"],  final_response.usage_metadata["output_tokens"], self.model_name or self.llm_handler.model_name
-                )
-            
-            total_cost= in_cost+ out_cost
-
-         
-
-            meta["input_tokens"]  =  final_response.usage_metadata["input_tokens"]
-            meta["output_tokens"] =  final_response.usage_metadata["output_tokens"]
-            meta["total_tokens"]  =  final_response.usage_metadata["output_tokens"] + final_response.usage_metadata["input_tokens"]
-            
-            meta["input_cost"]= in_cost
-            meta["output_cost"]= out_cost
-            meta["total_cost"]= total_cost
-
+        final_success = False
+        final_error_type = None
         
-        return InvokeResponseData(
-            success = final_success,
-            response = final_response,
-            attempts = attempts, 
-            usage= meta, 
-            error_type=error_type
-        )
-    
-
-   
-
-    
-    
-   
-    
-
-
-    def cost_calculator(self, input_token, output_token, model_name):
-        """
-        Calculate input/output costs based on the gpt_models_cost dict.
-
-        :param input_token: number of input tokens (int or numeric str)
-        :param output_token: number of output tokens (int or numeric str)
-        :param model_name: model key in gpt_models_cost
-        :return: (input_cost, output_cost)
-
-          in_cost, out_cost = self.cost_calculator(
-                meta["input_tokens"], meta["output_tokens"], model_name or self.llm_handler.model_name
+        try:
+            async for attempt in AsyncRetrying(
+                retry=retry_if_exception_type((httpx.HTTPStatusError, RateLimitError)),
+                stop=stop_after_attempt(self.max_retries),
+                wait=wait_random_exponential(min=1, max=60),
+                reraise=True
+            ):
+                with attempt:
+                    n = attempt.retry_state.attempt_number
+                    start = _now_dt()
+                    
+                    try:
+                        resp, success, error_type = await self.provider._invoke_async_impl(payload)
+                        final_response = resp
+                        final_success = success
+                        final_error_type = error_type
+                    except Exception as e:
+                        end = _now_dt()
+                        backoff = None
+                        if attempt.retry_state.next_action:
+                            backoff = timedelta(seconds=attempt.retry_state.next_action.sleep)
+                        
+                        attempts.append(InvocationAttempt(
+                            attempt_number=n,
+                            invoke_start_at=start,
+                            invoke_end_at=end,
+                            backoff_after_ms=backoff,
+                            error_message=str(e)
+                        ))
+                        raise
+                    else:
+                        end = _now_dt()
+                        attempts.append(InvocationAttempt(
+                            attempt_number=n,
+                            invoke_start_at=start,
+                            invoke_end_at=end,
+                            backoff_after_ms=None,
+                            error_message=None
+                        ))
+            
+            # Build usage metadata with costs
+            usage = self._build_usage_metadata(final_response, final_success)
+            
+            return InvokeResponseData(
+                success=final_success,
+                response=final_response,
+                attempts=attempts,
+                usage=usage,
+                error_type=final_error_type
             )
-        """
-        # Ensure the model exists
-        info = gpt_models_cost.get(model_name)
-        if info is None:
-            self.logger.error(f"cost_calculator error: Unsupported model name: {model_name}")
-            raise ValueError(f"cost_calculator error: Unsupported model name: {model_name}")
+            
+        except Exception as final_exc:
+            # All retries exhausted
+            self.logger.error(f"All async retries exhausted for model {self.model_name}: {final_exc}")
+            usage = self._init_empty_usage()
+            return InvokeResponseData(
+                success=False,
+                response=None,
+                attempts=attempts,
+                usage=usage,
+                error_type=final_error_type
+            )
+    
+    def _build_usage_metadata(self, response: Any, success: bool) -> Dict[str, Any]:
+        """Build comprehensive usage metadata with costs."""
+        if not success or not response:
+            return self._init_empty_usage()
         
-        # Parse token counts
-        itoks = int(input_token)
-        otoks = int(output_token)
-
-        # Multiply by per-token rates
-        inp_rate = info['input_token_cost']
-        out_rate = info['output_token_cost']
-        input_cost  = inp_rate  * itoks
-        output_cost = out_rate * otoks
-
-        return input_cost, output_cost
+        # Extract basic usage from provider
+        usage = self.provider.extract_usage(response)
+        
+        # Calculate costs
+        input_cost, output_cost = self.provider.calculate_cost(usage)
+        
+        # Build complete metadata
+        return {
+            **usage,
+            "input_cost": input_cost,
+            "output_cost": output_cost,
+            "total_cost": input_cost + output_cost
+        }
     
-    
-    
-
-    def _retry_count_is_max(self, retry_state: RetryCallState) -> bool:
-        """
-        Helper function to check if the retry limit is reached.
-        Compares the current attempt number with the max_retries set.
-        """
-        current_attempt = retry_state.attempt_number
-        return current_attempt >= self.max_retries
-    
-
+    def _init_empty_usage(self) -> Dict[str, Any]:
+        """Return empty usage metadata structure."""
+        return {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "input_cost": 0.0,
+            "output_cost": 0.0,
+            "total_cost": 0.0
+        }
 
 
+# ============================================================================
+# Testing/Example Usage
+# ============================================================================
 
 def main():
-   
-    llm_handler=LLMHandler(model_name="gpt-4o-search-preview")
-    # llm_handler=LLMHandler(model_name="gpt-4o-mini")
-    sample_prompt= "web search yap ve bana bugun bursadaki hava durumunu ver"
+    """Example usage of the refactored LLMHandler."""
+    import base64
+    from pathlib import Path
+    
+    logging.basicConfig(level=logging.DEBUG)
+    
+    # Test 1: Basic OpenAI model
+    print("=== Testing Basic OpenAI Model ===")
+    handler = LLMHandler("gpt-4o-mini")
+    
+    request = LLMCallRequest(
+        model_name="gpt-4o-mini",
+        user_prompt="What is the capital of France?"
+    )
+    
+    result = handler.process_call_request(request)
+    print(f"Success: {result.success}")
+    if result.success:
+        print(f"Response: {result.response.content}")
+        print(f"Usage: {result.usage}")
+    else:
+        print(f"Error: {result.error_type}")
+    
+    # Test 2: Audio input (multimodal)
+    print("\n=== Testing Audio Input (Multimodal) ===")
+    try:
+        # Switch to audio-capable model
+        handler.change_model("gpt-4o-audio-preview")
+        
+        wav_path = Path("llmservice/my_voice.wav")
+        if wav_path.exists():
+            # Read and base64-encode the audio file
+            b64_wav = base64.b64encode(wav_path.read_bytes()).decode("ascii")
+            
+            # Create audio request using new interface
+            audio_request = LLMCallRequest(
+                model_name="gpt-4o-audio-preview",
+                user_prompt="Please answer the question in the audio:",
+                input_audio_b64=b64_wav
+            )
+            
+            audio_result = handler.process_call_request(audio_request)
+            print(f"Audio Success: {audio_result.success}")
+            if audio_result.success:
+                print(f"Audio Response: {audio_result.response.content}")
+                print(f"Audio Usage: {audio_result.usage}")
+            else:
+                print(f"Audio Error: {audio_result.error_type}")
+        else:
+            print(f"Audio file not found at {wav_path.resolve()}")
+            print("To test audio, place a WAV file at that location.")
+            
+    except Exception as e:
+        print(f"Audio test failed: {e}")
+    
+    # Test 3: System + User prompt combination
+    print("\n=== Testing System + User Prompt ===")
+    
+    system_user_request = LLMCallRequest(
+        model_name="gpt-4o-mini",
+        system_prompt="You are a helpful math tutor. Always show your work.",
+        user_prompt="What is 15 * 23?"
+    )
+    
+    system_result = handler.process_call_request(system_user_request)
+    print(f"System+User Success: {system_result.success}")
+    if system_result.success:
+        print(f"Response: {system_result.response.content}")
 
-    r=llm_handler.invoke(sample_prompt)
+    # Test 4: Audio Output (Text-to-Speech)
+    print("\n=== Testing Audio Output (Text-to-Speech) ===")
+    try:
+        # Test with audio output
+        audio_output_request = LLMCallRequest(
+            model_name="gpt-4o-audio-preview",
+            user_prompt="Please say 'Hello, this is a test of audio output' in a friendly voice.",
+            output_data_format="audio",  # Request audio output
+            audio_output_config={"voice": "alloy", "format": "wav"}  # Optional config
+        )
+        
+        audio_output_result = handler.process_call_request(audio_output_request)
+        print(f"Audio Output Success: {audio_output_result.success}")
+        
+        if audio_output_result.success:
+            print(f"Audio Output Usage: {audio_output_result.usage}")
+            
+            # Save comprehensive response info to file
+            response = audio_output_result.response
+            log_file = Path("llmservice/audio_response_debug.txt")
+            
+            with open(log_file, "w") as f:
+                f.write("=== AUDIO OUTPUT RESPONSE DEBUG ===\n\n")
+                f.write(f"Response type: {type(response)}\n")
+                f.write(f"Response class: {response.__class__}\n\n")
+                
+                # Write all attributes
+                f.write("=== RESPONSE ATTRIBUTES ===\n")
+                for attr in dir(response):
+                    if not attr.startswith('_'):
+                        try:
+                            value = getattr(response, attr)
+                            if callable(value):
+                                f.write(f"{attr}: <method>\n")
+                            else:
+                                f.write(f"{attr}: {type(value)} = {repr(value)}\n")
+                        except Exception as e:
+                            f.write(f"{attr}: <error getting value: {e}>\n")
+                
+                # Special focus on important attributes
+                f.write("\n=== DETAILED ATTRIBUTE INSPECTION ===\n")
+                
+                # Content
+                if hasattr(response, 'content'):
+                    f.write(f"content type: {type(response.content)}\n")
+                    f.write(f"content value: {repr(response.content)}\n\n")
+                
+                # Response metadata
+                if hasattr(response, 'response_metadata'):
+                    f.write(f"response_metadata type: {type(response.response_metadata)}\n")
+                    f.write(f"response_metadata: {response.response_metadata}\n\n")
+                
+                # Usage metadata
+                if hasattr(response, 'usage_metadata'):
+                    f.write(f"usage_metadata type: {type(response.usage_metadata)}\n")
+                    f.write(f"usage_metadata: {response.usage_metadata}\n\n")
+                
+                # Additional kwargs (where audio might be hiding)
+                if hasattr(response, 'additional_kwargs'):
+                    f.write(f"additional_kwargs type: {type(response.additional_kwargs)}\n")
+                    f.write(f"additional_kwargs: {response.additional_kwargs}\n\n")
+                
+                # Try to access the raw response if available
+                if hasattr(response, '_raw_response'):
+                    f.write(f"_raw_response: {response._raw_response}\n\n")
+                
+                # Check if there's a choices attribute
+                if hasattr(response, 'choices'):
+                    f.write(f"choices: {response.choices}\n\n")
+                
+                # Full object representation
+                f.write("=== FULL OBJECT REPR ===\n")
+                f.write(f"{repr(response)}\n")
+            
+            print(f"📝 Full response debug saved to: {log_file.resolve()}")
+            
+            # Check if response has audio data in the correct location
+            audio_found = False
+            
+            # Check additional_kwargs for audio (this is where it actually is!)
+            if hasattr(response, 'additional_kwargs') and isinstance(response.additional_kwargs, dict):
+                if 'audio' in response.additional_kwargs:
+                    audio_info = response.additional_kwargs['audio']
+                    if isinstance(audio_info, dict) and 'data' in audio_info:
+                        print("✅ Audio data found in response.additional_kwargs['audio']['data']")
+                        print(f"Audio transcript: {audio_info.get('transcript', 'No transcript')}")
+                        
+                        try:
+                            # Decode base64 audio data
+                            audio_data = audio_info['data']
+                            audio_bytes = base64.b64decode(audio_data)
+                            
+                            output_path = Path("llmservice/test_audio_output.wav")
+                            output_path.write_bytes(audio_bytes)
+                            print(f"✅ Audio saved to: {output_path.resolve()}")
+                            print(f"Audio size: {len(audio_bytes)} bytes")
+                            audio_found = True
+                        except Exception as save_error:
+                            print(f"⚠️ Could not save audio: {save_error}")
+                    else:
+                        print("✅ Audio found in additional_kwargs but no 'data' field")
+            
+            # Fallback: Check response_metadata for audio
+            if not audio_found and hasattr(response, 'response_metadata') and isinstance(response.response_metadata, dict):
+                if 'audio' in response.response_metadata:
+                    print("✅ Audio found in response_metadata")
+                    audio_found = True
+            
+            # Legacy check: response.content (probably won't find anything now)
+            if not audio_found and hasattr(response, 'content') and isinstance(response.content, dict) and 'audio' in response.content:
+                audio_info = response.content['audio']
+                if isinstance(audio_info, dict) and 'data' in audio_info:
+                    print("✅ Audio data found in response.content['audio']['data']")
+                    audio_found = True
+            
+            if not audio_found:
+                print("⚠️ No audio data found - check the debug file for details")
+        else:
+            print(f"Audio Output Error: {audio_output_result.error_type}")
+            
+    except Exception as e:
+        print(f"Audio output test failed: {e}")
 
-    print(r)
+    # Test 5: Both Text and Audio Output
+    print("\n=== Testing Both Text and Audio Output ===")
+    try:
+        both_output_request = LLMCallRequest(
+            model_name="gpt-4o-audio-preview",
+            user_prompt="Explain what AI is in simple terms.",
+            output_data_format="both",  # Request both text and audio
+            audio_output_config={"voice": "shimmer", "format": "wav"}
+        )
+        
+        both_result = handler.process_call_request(both_output_request)
+        print(f"Both Output Success: {both_result.success}")
+        
+        if both_result.success:
+            response = both_result.response
+            
+            # Save "both" mode response to file too
+            log_file_both = Path("llmservice/both_response_debug.txt")
+            
+            with open(log_file_both, "w") as f:
+                f.write("=== BOTH MODE RESPONSE DEBUG ===\n\n")
+                f.write(f"Response type: {type(response)}\n")
+                f.write(f"Response class: {response.__class__}\n\n")
+                
+                # Write all attributes
+                f.write("=== RESPONSE ATTRIBUTES ===\n")
+                for attr in dir(response):
+                    if not attr.startswith('_'):
+                        try:
+                            value = getattr(response, attr)
+                            if callable(value):
+                                f.write(f"{attr}: <method>\n")
+                            else:
+                                f.write(f"{attr}: {type(value)} = {repr(value)}\n")
+                        except Exception as e:
+                            f.write(f"{attr}: <error getting value: {e}>\n")
+                
+                f.write("\n=== DETAILED INSPECTION ===\n")
+                
+                if hasattr(response, 'content'):
+                    f.write(f"content: {repr(response.content)}\n\n")
+                if hasattr(response, 'response_metadata'):
+                    f.write(f"response_metadata: {response.response_metadata}\n\n")
+                if hasattr(response, 'additional_kwargs'):
+                    f.write(f"additional_kwargs: {response.additional_kwargs}\n\n")
+                
+                f.write(f"Full repr: {repr(response)}\n")
+            
+            print(f"📝 Both mode response debug saved to: {log_file_both.resolve()}")
+            
+            # Check text output
+            if hasattr(response, 'content'):
+                if isinstance(response.content, str):
+                    print(f"✅ Text received: {response.content[:100]}...")
+                elif isinstance(response.content, dict):
+                    # Extract text from dict structure
+                    text_content = response.content.get('text', response.content.get('content', ''))
+                    if text_content:
+                        print(f"✅ Text received: {text_content[:100]}...")
+            
+            # Check audio output in the correct location (additional_kwargs)
+            audio_found = False
+            if hasattr(response, 'additional_kwargs') and isinstance(response.additional_kwargs, dict):
+                if 'audio' in response.additional_kwargs:
+                    audio_info = response.additional_kwargs['audio']
+                    if isinstance(audio_info, dict) and 'data' in audio_info:
+                        print("✅ Audio data also received in additional_kwargs")
+                        print(f"Audio transcript: {audio_info.get('transcript', 'No transcript')}")
+                        
+                        try:
+                            # Decode and save the audio from "both" mode
+                            audio_data = audio_info['data']
+                            audio_bytes = base64.b64decode(audio_data)
+                            
+                            output_path = Path("llmservice/test_both_output.wav")
+                            output_path.write_bytes(audio_bytes)
+                            print(f"✅ Audio saved to: {output_path.resolve()}")
+                            print(f"Audio size: {len(audio_bytes)} bytes")
+                            audio_found = True
+                        except Exception as save_error:
+                            print(f"⚠️ Could not save audio: {save_error}")
+            
+            # Fallback: Check legacy location
+            if not audio_found and hasattr(response, 'content') and isinstance(response.content, dict) and 'audio' in response.content:
+                audio_info = response.content['audio']
+                if isinstance(audio_info, dict) and 'data' in audio_info:
+                    print("✅ Audio data also received in content")
+                    audio_found = True
+            
+            if not audio_found:
+                print("⚠️ No audio data found in 'both' mode response")
+            
+            print(f"Both Output Usage: {both_result.usage}")
+        else:
+            print(f"Both Output Error: {both_result.error_type}")
+            
+    except Exception as e:
+        print(f"Both output test failed: {e}")
 
+    # Test 6: System + User prompt combination
+    print("\n=== Testing Model Switching ===")
+    handler.change_model("gpt-4o")
+    
+    switch_request = LLMCallRequest(
+        model_name="gpt-4o",
+        user_prompt="Write a haiku about programming."
+    )
+    
+    switch_result = handler.process_call_request(switch_request)
+    print(f"Model Switch Success: {switch_result.success}")
+    if switch_result.success:
+        print(f"Haiku Response: {switch_result.response.content}")
 
 
 if __name__ == "__main__":

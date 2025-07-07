@@ -235,39 +235,167 @@ class EventTimestamps:
 
 
 
+@dataclass
+class LLMCallRequest:
+    # ── runtime & plumbing ────────────────────────────────────────────────
+    model_name:            Optional[str]          = None
+    number_of_retries:Optional[int]          = None
+    
+    output_type:         Literal["json", "str"] = "str"
+    fail_fallback_value: Optional[str]          = None
+    
+
+    # ── chat / multimodal fields (the ONLY prompt path) ───────────────────
+    system_prompt:    Optional[str]          = None   # 1 system message
+    user_prompt:      Optional[str]          = None   # 1 user message (text)
+    assistant_text:   Optional[str]          = None   # seed assistant message
+    input_audio_b64:  Optional[str]          = None   # base-64 WAV
+    images:           Optional[List[str]]    = None   # list of b64 PNG/JPG
+    tool_call:        Optional[Dict[str, any]]= None  # tool/function stub
+
+    # desired output format
+    output_data_format: Literal["text", "audio", "both"] = "text"
+    audio_output_config: Optional[Dict[str, any]] = None  # e.g. {"voice":"alloy","format":"wav"}
+
+   
+
 
 
 @dataclass
 class GenerationRequest:
-    formatted_prompt: Optional[str] = None
-    unformatted_prompt: Optional[str] = None
-    data_for_placeholders: Optional[Dict[str, Any]] = None
-    model: Optional[str] = None
-    output_type: Literal["json", "str"] = "str"
-    operation_name: Optional[str] = None
-    request_id: Optional[Union[str, int]] = None
-    number_of_retries: Optional[int] = None
-    pipeline_config: List[Dict[str, Any]] = field(default_factory=list)
-    fail_fallback_value: Optional[str] = None
+    # ── runtime & plumbing ────────────────────────────────────────────────
+    model:            Optional[str]          = None
+    operation_name:   Optional[str]          = None
+    request_id:       Optional[Union[str,int]] = None
+    
+    number_of_retries:Optional[int]          = None
+    
+    
+    # result handling
+    output_type:         Literal["json", "str"] = "str"
+    fail_fallback_value: Optional[str]          = None
+    pipeline_config:     List[Dict[str, any]]   = field(default_factory=list)
 
-    def __post_init__(self):
-        has_formatted    = self.formatted_prompt is not None
-        has_unformatted  = self.unformatted_prompt is not None
-        has_placeholders = self.data_for_placeholders is not None
+    # ── chat / multimodal fields (the ONLY prompt path) ───────────────────
+    system_prompt:    Optional[str]          = None   # 1 system message
+    user_prompt:      Optional[str]          = None   # 1 user message (text)
+    assistant_text:   Optional[str]          = None   # seed assistant message
+    input_audio_b64:  Optional[str]          = None   # base-64 WAV
+    images:           Optional[List[str]]    = None   # list of b64 PNG/JPG
+    tool_call:        Optional[Dict[str, any]]= None  # tool/function stub
 
-        # If a formatted_prompt is given, disallow the other two
-        if has_formatted and (has_unformatted or has_placeholders):
+    # desired output format
+    output_data_format: Literal["text", "audio", "both"] = "text"
+    audio_output_config: Optional[Dict[str, any]] = None  # e.g. {"voice":"alloy","format":"wav"}
+
+    # ── validation ───────────────────────────────────────────────────────
+    def __post_init__(self) -> None:
+        # Do we have *any* chat / multimodal content?
+        has_chat_bits = any([
+            self.system_prompt, self.user_prompt, self.assistant_text,
+            self.input_audio_b64, self.images, self.tool_call,
+        ])
+
+        if not has_chat_bits:
             raise ValueError(
-                "Use either `formatted_prompt` by itself, "
-                "or both `unformatted_prompt` and `data_for_placeholders`, not both."
+                "GenerationRequest requires at least one of "
+                "`system_prompt`, `user_prompt`, audio, image or tool fields."
             )
-        # If no formatted_prompt, require both unformatted_prompt and data_for_placeholders
-        if not has_formatted:
-            if not (has_unformatted and has_placeholders):
-                raise ValueError(
-                    "Either `formatted_prompt` must be set, "
-                    "or both `unformatted_prompt` and `data_for_placeholders` must be provided."
-                )
+
+
+
+# @dataclass
+# class GenerationRequest:
+#     formatted_prompt: Optional[str] = None
+#     # unformatted_prompt: Optional[str] = None
+#     # data_for_placeholders: Optional[Dict[str, Any]] = None
+#     model: Optional[str] = None
+#     output_type: Literal["json", "str"] = "str"
+#     operation_name: Optional[str] = None
+#     request_id: Optional[Union[str, int]] = None
+#     number_of_retries: Optional[int] = None
+#     pipeline_config: List[Dict[str, Any]] = field(default_factory=list)
+#     fail_fallback_value: Optional[str] = None
+    
+#     system_prompt: Optional[str] = None          # ⇢ one system message
+#     user_prompt:   Optional[str] = None          # ⇢ one user message
+#     assistant_text: Optional[str] = None       # ⇢ optional “assistant” seed
+#     input_audio_b64: Optional[str] = None      # ⇢ base-64 WAV
+    
+#     images: Optional[list[str]] = None         # ⇢ list of base-64 PNG/JPG
+#     tool_call: Optional[dict] = None           # ⇢ function / tool stub
+    
+    
+#     output_data_format: Literal["text", "audio", "both"] = "text"
+#     audio_output_config: Optional[Dict[str,str]] = None
+
+
+#     # ── validation ─────────────────────────────────────────────────────────────
+#     def __post_init__(self) -> None:
+#         # 1) Legacy “one big string” modes
+#         has_full_string = self.formatted_prompt is not None
+#         has_template    = (
+#             self.unformatted_prompt is not None
+#             and self.data_for_placeholders is not None
+#         )
+
+#         # 2) New chat / multimodal mode
+#         has_chat_bits = any(
+#             [
+#                 self.system_prompt,
+#                 self.user_prompt,
+#                 self.assistant_text,
+#                 self.input_audio_b64,
+#                 self.images,
+#                 self.tool_call,
+#             ]
+#         )
+
+#         # ───────────────────────────────────────────────────────────────────────
+#         # ✓ valid      → exactly ONE of the three paths
+#         # ✗ not-valid  → mixing paths, or providing none
+#         # ───────────────────────────────────────────────────────────────────────
+#         if (has_full_string or has_template) and has_chat_bits:
+#             raise ValueError(
+#                 "Provide *either* the legacy prompt fields "
+#                 "(formatted_prompt OR unformatted_prompt+data_for_placeholders) "
+#                 "OR the chat/multimodal fields, but not both."
+#             )
+        
+#         if not (has_full_string or has_template or has_chat_bits):
+#             raise ValueError(
+#                 "GenerationRequest must contain at least one prompt source: "
+#                 "• formatted_prompt  • unformatted_prompt+data  • chat/multimodal fields"
+#             )
+
+#         if has_full_string and has_template:
+#             raise ValueError(
+#                 "Use **only** formatted_prompt *or* "
+#                 "unformatted_prompt+data_for_placeholders — not both."
+#             )
+
+
+
+
+
+    # def __post_init__(self):
+    #     has_formatted    = self.formatted_prompt is not None
+    #     has_unformatted  = self.unformatted_prompt is not None
+    #     has_placeholders = self.data_for_placeholders is not None
+
+    #     # If a formatted_prompt is given, disallow the other two
+    #     if has_formatted and (has_unformatted or has_placeholders):
+    #         raise ValueError(
+    #             "Use either `formatted_prompt` by itself, "
+    #             "or both `unformatted_prompt` and `data_for_placeholders`, not both."
+    #         )
+    #     # If no formatted_prompt, require both unformatted_prompt and data_for_placeholders
+    #     if not has_formatted:
+    #         if not (has_unformatted and has_placeholders):
+    #             raise ValueError(
+    #                 "Either `formatted_prompt` must be set, "
+    #                 "or both `unformatted_prompt` and `data_for_placeholders` must be provided."
+    #             )
 
 
 
@@ -297,8 +425,6 @@ class PipelineStepResult:
 
 
 
-
-
 @dataclass
 class GenerationResult:
     success: bool
@@ -306,6 +432,7 @@ class GenerationResult:
     request_id: Optional[Union[str, int]] = None
     content: Optional[Any] = None
     raw_content: Optional[str] = None  # Store initial LLM output
+    raw_response: Optional[Any] = None  # ← ADD THIS: Store the complete raw response object
     retried:  Optional[Any] = None, 
     attempt_count:  Optional[Any] = None,
     operation_name: Optional[str] = None
@@ -337,8 +464,61 @@ class GenerationResult:
     # complete copy of the generation_request
     generation_request: Optional[GenerationRequest] = None
 
+    # Add convenience methods for audio data
+    def get_audio_data(self) -> Optional[bytes]:
+        """Extract audio data from the raw response if available."""
+        if not self.raw_response:
+            return None
+        
+        # Check additional_kwargs for audio (OpenAI's location)
+        if hasattr(self.raw_response, 'additional_kwargs') and isinstance(self.raw_response.additional_kwargs, dict):
+            if 'audio' in self.raw_response.additional_kwargs:
+                audio_info = self.raw_response.additional_kwargs['audio']
+                if isinstance(audio_info, dict) and 'data' in audio_info:
+                    try:
+                        import base64
+                        return base64.b64decode(audio_info['data'])
+                    except Exception:
+                        return None
+        
+        # Check other possible locations
+        if hasattr(self.raw_response, 'content') and isinstance(self.raw_response.content, dict) and 'audio' in self.raw_response.content:
+            audio_info = self.raw_response.content['audio']
+            if isinstance(audio_info, dict) and 'data' in audio_info:
+                try:
+                    import base64
+                    return base64.b64decode(audio_info['data'])
+                except Exception:
+                    return None
+        
+        return None
 
+    def get_audio_transcript(self) -> Optional[str]:
+        """Extract audio transcript from the raw response if available."""
+        if not self.raw_response:
+            return None
+        
+        # Check additional_kwargs for audio transcript
+        if hasattr(self.raw_response, 'additional_kwargs') and isinstance(self.raw_response.additional_kwargs, dict):
+            if 'audio' in self.raw_response.additional_kwargs:
+                audio_info = self.raw_response.additional_kwargs['audio']
+                if isinstance(audio_info, dict):
+                    return audio_info.get('transcript')
+        
+        return None
 
+    def save_audio(self, filepath: str) -> bool:
+        """Save audio data to a file. Returns True if successful."""
+        audio_data = self.get_audio_data()
+        if audio_data:
+            try:
+                from pathlib import Path
+                Path(filepath).write_bytes(audio_data)
+                return True
+            except Exception:
+                return False
+        return False
+    
     def __str__(self) -> str:
         lines: list[str] = []
         for f in fields(self):
@@ -374,6 +554,51 @@ class GenerationResult:
             lines.append(f"{name}: {value}")
 
         return "\n".join(lines)
+
+
+
+
+# @dataclass
+# class GenerationResult:
+#     success: bool
+#     trace_id: str           
+#     request_id: Optional[Union[str, int]] = None
+#     content: Optional[Any] = None
+#     raw_content: Optional[str] = None  # Store initial LLM output
+#     retried:  Optional[Any] = None, 
+#     attempt_count:  Optional[Any] = None,
+#     operation_name: Optional[str] = None
+#     usage: Dict[str, Any] = field(default_factory=dict)
+#     elapsed_time: Optional[float] = None
+#     error_message: Optional[str] = None
+#     model: Optional[str] = None
+#     formatted_prompt: Optional[str] = None
+#     unformatted_prompt: Optional[str] = None
+#     response_type: Optional[str] = None
+#     pipeline_steps_results: List[PipelineStepResult] = field(default_factory=list)
+#     # rpm tpm related logs
+#     rpm_at_the_beginning: Optional[int] = None
+#     rpm_at_the_end: Optional[int] = None
+#     tpm_at_the_beginning: Optional[int] = None
+#     tpm_at_the_end: Optional[int] = None
+#     rpm_waited: Optional[bool] = None
+#     rpm_wait_loops: Optional[int] = None
+#     rpm_waited_ms: Optional[int] = None
+#     tpm_waited: Optional[bool] = None
+#     tpm_wait_loops: Optional[int] = None
+#     tpm_waited_ms: Optional[int] = None
+#     total_invoke_duration_ms:  Optional[Any] = None, 
+#     total_backoff_ms: Optional[Any] = None, 
+#     backoff: BackoffStats = field(default_factory=BackoffStats)
+
+#     # detailed timestamp logs  requested_at, enqueued_at... 
+#     timestamps: Optional[EventTimestamps] = None
+#     # complete copy of the generation_request
+#     generation_request: Optional[GenerationRequest] = None
+
+
+
+    
     
 
     # # ---------- pretty-printer ---------- #
