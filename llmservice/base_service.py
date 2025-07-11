@@ -31,6 +31,45 @@ from llmservice.debug_tools import timed
 
 
 
+
+# from . import prompts
+# import inspect
+
+# class MyLLMService(BaseLLMService):
+#     ...
+
+#     # ── internal helper ──────────────────────────────────────────
+#     def _render_prompt(
+#         self,
+#         template_name: str | None,
+#         *,
+#         corpus: str,
+#         thing: str
+#     ) -> str:
+#         """
+#         Return the final prompt text.
+
+#         • `template_name` is the UPPER-case constant name in prompts.py
+#           (case-insensitive).  
+#         • If the name is None or unknown, FALLS BACK to FILTER_BASE.
+#         • Automatically fills `{corpus}` and `{thing}` placeholders.
+#         """
+#         # collect all upper-case string constants
+#         prompt_map = {
+#             k.upper(): v
+#             for k, v in inspect.getmembers(prompts)
+#             if isinstance(v, str) and k.isupper()
+#         }
+
+#         raw_tpl = prompt_map.get(
+#             (template_name or "").upper(),
+#             prompts.FILTER_BASE
+#         )
+
+#         # one central place that does the .format()
+#         return raw_tpl.format(corpus=corpus, thing=thing)
+
+
 class BaseLLMService(ABC):
   
     

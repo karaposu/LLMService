@@ -4,6 +4,7 @@
 
 
 -----------------
+LLMService does one thing well - manage LLM invocations with production concerns (clean code separation, rate limits, costs, retries, extensive logging, postprocessing, scalable architecture).
 
 A clean, production-ready service layer that centralizes prompts, invocations, and post-processing, ensuring rate-aware, maintainable, and scalable LLM logic in your application.
 

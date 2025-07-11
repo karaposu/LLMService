@@ -9,6 +9,8 @@ tqdm
 python-magic
 python-dotenv
 pytest
+sounddevice
+soundfile
 
 
 # openai
