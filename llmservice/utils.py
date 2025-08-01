@@ -13,8 +13,7 @@ def _now_dt() -> datetime:
 
 from pathlib import Path
 import io
-import sounddevice as sd
-import soundfile as sf
+
 from datetime import datetime
 
 def record_audio_to_file(
@@ -26,6 +25,10 @@ def record_audio_to_file(
     also_return_bytes: bool = False,
     playback: bool = True,
 ) -> bytes | None:
+    
+
+    import sounddevice as sd
+    import soundfile as sf
     """
     Record audio from the default input device and save it as a WAV file.
 
