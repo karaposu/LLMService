@@ -11,7 +11,7 @@ class MyLLMService(BaseLLMService):
         formatted_prompt = f"""Here is my database description: {database_desc},
                             and here is what the user wants to learn: {user_question}.
                             I want you to generate a SQL query. answer should contain only SQL code."""
-
+         
         pipeline_config = [
             {
                 'type': 'SemanticIsolation',   # uses LLM to isolate specific part of the answer.

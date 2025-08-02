@@ -480,28 +480,54 @@ Provide the answer strictly in the following JSON format, do not combine anythin
 
         return isolated_answer
 
-    def process_converttodict(self, content: Any) -> Dict[str, Any]:
+    def process_converttodict(self, content: Any) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
         """
-        Converts content to a dictionary.
+        Converts content to a dictionary or list of dictionaries.
 
         :param content: The content to convert.
-        :return: The content as a dictionary.
+        :return: The content as a dictionary or list of dictionaries.
         """
         if isinstance(content, dict):
             return content  # Already a dict
-        return self.s2d.run(content)
+        if isinstance(content, list):
+            return content  # Already a list
+        
+        # Use String2Dict to parse
+        result = self.s2d.run(content)
+        
+        # String2Dict returns tuple for JSON arrays, convert to list
+        if isinstance(result, tuple):
+            return list(result)
+        
+        return result
 
-    def process_extractvalue(self, content: Dict[str, Any], key: str) -> Any:
+    def process_extractvalue(self, content: Union[Dict[str, Any], List[Dict[str, Any]]], key: str) -> Any:
         """
-        Extracts a value from a dictionary.
+        Extracts a value from a dictionary or from each dictionary in a list.
 
-        :param content: The dictionary content.
+        :param content: The dictionary content or list of dictionaries.
         :param key: The key to extract.
-        :return: The extracted value.
+        :return: The extracted value (single value for dict, list of values for list).
         """
-        if key not in content:
-            raise KeyError(f"Key '{key}' not found in content.")
-        return content[key]
+        # Handle list of dictionaries
+        if isinstance(content, list):
+            extracted_values = []
+            for i, item in enumerate(content):
+                if not isinstance(item, dict):
+                    raise TypeError(f"Item at index {i} is not a dictionary: {type(item)}")
+                if key not in item:
+                    raise KeyError(f"Key '{key}' not found in item at index {i}.")
+                extracted_values.append(item[key])
+            return extracted_values
+        
+        # Handle single dictionary (original behavior)
+        elif isinstance(content, dict):
+            if key not in content:
+                raise KeyError(f"Key '{key}' not found in content.")
+            return content[key]
+        
+        else:
+            raise TypeError(f"Content must be a dictionary or list of dictionaries, got: {type(content)}")
     
     def process_stringmatchvalidation(self, content: str, expected_string: str) -> str:
         """

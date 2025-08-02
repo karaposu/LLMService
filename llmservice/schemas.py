@@ -432,7 +432,7 @@ class GenerationResult:
     request_id: Optional[Union[str, int]] = None
     content: Optional[Any] = None
     raw_content: Optional[str] = None  # Store initial LLM output
-    raw_response: Optional[Any] = None  # ← ADD THIS: Store the complete raw response object
+    raw_response: Optional[Any] = None  #Store the complete raw response object
     retried:  Optional[Any] = None, 
     attempt_count:  Optional[Any] = None,
     operation_name: Optional[str] = None
