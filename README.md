@@ -1,8 +1,8 @@
 
 
-![LLMSERVICE Logo](https://raw.githubusercontent.com/karaposu/llmkit/refs/heads/main/assets/text_logo_transp.png)
+![LLMSERVICE Logo](https://raw.githubusercontent.com/karaposu/LLMService/refs/heads/main/assets/text_logo_transp_1.png)
 
-<!-- /Users/ns/Desktop/projects/LLMService/assets/text_logo_transp_1.png -->
+
 
 
 -----------------
