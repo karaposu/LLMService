@@ -2,6 +2,8 @@
 
 ![LLMSERVICE Logo](https://raw.githubusercontent.com/karaposu/llmkit/refs/heads/main/assets/text_logo_transp.png)
 
+<!-- /Users/ns/Desktop/projects/LLMService/assets/text_logo_transp_1.png -->
+
 
 -----------------
 LLMService does one thing well - manage LLM invocations with production concerns (clean code separation, rate limits, costs, retries, extensive logging, postprocessing, scalable architecture).
