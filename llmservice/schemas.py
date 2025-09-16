@@ -1,11 +1,12 @@
 # schemas.py
 
 from dataclasses import dataclass, field, fields, asdict
-from typing import Any, Dict, Optional, Union, Literal , List
+from typing import Any, Dict, Optional, Union, Literal , List, Type
 import pprint
 from datetime import datetime, timezone, timedelta
 import json
 from textwrap import indent
+from pydantic import BaseModel as PydanticModel
 
 
 HEADER = lambda s: f"\033[1m{s}\033[0m" 
@@ -259,6 +260,14 @@ class LLMCallRequest:
     
     # Responses API CoT chaining
     previous_response_id: Optional[str] = None  # For chaining CoT with Responses API
+    
+    # GPT-5 reasoning control
+    reasoning_effort: Optional[Literal["low", "medium", "high"]] = None  # Control reasoning depth
+    verbosity: Optional[Literal["low", "medium", "high"]] = None  # Control output verbosity
+    
+    # Structured Output support
+    response_schema: Optional[Type[PydanticModel]] = None  # Pydantic model for response
+    strict_mode: bool = True  # Enable strict schema validation
 
    
 
@@ -293,6 +302,15 @@ class GenerationRequest:
     
     # Responses API CoT chaining
     previous_response_id: Optional[str] = None  # For chaining CoT with Responses API
+    
+    # GPT-5 reasoning control
+    reasoning_effort: Optional[Literal["low", "medium", "high"]] = None  # Control reasoning depth
+    verbosity: Optional[Literal["low", "medium", "high"]] = None  # Control output verbosity
+    
+    # Structured Output support  
+    response_schema: Optional[Type[PydanticModel]] = None  # Pydantic model for response
+    strict_mode: bool = True  # Enable strict schema validation
+    parse_response: bool = True  # Auto-parse to Pydantic model
 
     # ── validation ───────────────────────────────────────────────────────
     def __post_init__(self) -> None:

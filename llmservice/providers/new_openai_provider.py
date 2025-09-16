@@ -6,7 +6,7 @@ Uses the new Responses API instead of Chat Completions.
 
 import os
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Type
 from openai import OpenAI
 from openai import RateLimitError, PermissionDeniedError
 
@@ -162,10 +162,22 @@ class ResponsesAPIProvider(BaseLLMProvider):
             payload["tools"] = self._convert_tools(request.tool_call)
         
         # Handle structured output format
-        if hasattr(request, 'output_format') and request.output_format:
+        if hasattr(request, 'response_schema') and request.response_schema:
+            # Structured Output with Pydantic schema
+            if "text" not in payload:
+                payload["text"] = {}
+            payload["text"]["format"] = self._build_json_schema(request.response_schema, 
+                                                               getattr(request, 'strict_mode', True))
+        elif hasattr(request, 'output_format') and request.output_format:
+            # Legacy format specification
             if "text" not in payload:
                 payload["text"] = {}
             payload["text"]["format"] = request.output_format
+        elif request.output_type == "json":
+            # Fallback to JSON mode for backward compatibility
+            if "text" not in payload:
+                payload["text"] = {}
+            payload["text"]["format"] = {"type": "json_object"}
         
         # Note: Responses API handles audio differently than Chat Completions
         # Audio output is not configured via a separate parameter
@@ -259,6 +271,64 @@ class ResponsesAPIProvider(BaseLLMProvider):
             return [tools]
         else:
             return []
+    
+    def _build_json_schema(self, schema_model: Type, strict: bool = True) -> Dict:
+        """Convert Pydantic model to JSON Schema for Structured Outputs."""
+        from pydantic import BaseModel
+        
+        # Ensure it's a Pydantic model
+        if not issubclass(schema_model, BaseModel):
+            raise ValueError(f"response_schema must be a Pydantic BaseModel, got {type(schema_model)}")
+        
+        # Generate JSON schema with proper configuration for strict mode
+        schema = schema_model.model_json_schema(mode='serialization')
+        
+        # For strict mode, we need to ensure all properties are required
+        # and additionalProperties is false
+        if strict:
+            schema['additionalProperties'] = False
+            # Make all properties required (even Optional ones)
+            if 'properties' in schema:
+                schema['required'] = list(schema['properties'].keys())
+            # Also set it recursively for nested objects
+            self._set_additional_properties_false(schema)
+        
+        # Build Structured Output format specification
+        return {
+            "type": "json_schema",
+            "name": schema_model.__name__.lower(),
+            "schema": schema,
+            "strict": strict
+        }
+    
+    def _set_additional_properties_false(self, schema: Dict):
+        """Recursively set additionalProperties to false and all properties to required."""
+        if isinstance(schema, dict):
+            if schema.get('type') == 'object':
+                schema['additionalProperties'] = False
+                # Make all properties required in nested objects too
+                if 'properties' in schema:
+                    schema['required'] = list(schema['properties'].keys())
+                    # Clean up $ref fields - they can't have description
+                    for prop_name, prop_schema in schema['properties'].items():
+                        if '$ref' in prop_schema and 'description' in prop_schema:
+                            # Keep only the $ref, remove description
+                            schema['properties'][prop_name] = {'$ref': prop_schema['$ref']}
+            
+            # Handle nested definitions
+            if '$defs' in schema:
+                for def_schema in schema['$defs'].values():
+                    self._set_additional_properties_false(def_schema)
+            
+            # Process nested schemas
+            for key, value in schema.items():
+                if key not in ['$defs']:  # Skip already processed defs
+                    if isinstance(value, dict):
+                        self._set_additional_properties_false(value)
+                    elif isinstance(value, list):
+                        for item in value:
+                            if isinstance(item, dict):
+                                self._set_additional_properties_false(item)
     
     def _invoke_impl(self, payload: Dict) -> Tuple[Any, bool, Optional[ErrorType]]:
         """Core synchronous invoke logic for Responses API."""

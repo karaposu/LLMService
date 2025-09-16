@@ -10,7 +10,7 @@ from dataclasses import dataclass, field, asdict, fields
 import uuid
 
 from llmservice.llm_handler import LLMHandler
-from string2dict import String2Dict
+# from string2dict import String2Dict  # DEPRECATED - No longer needed with structured outputs
 from langchain_core.prompts import PromptTemplate
 
 from .schemas import GenerationRequest, GenerationResult, PipelineStepResult, BackoffStats, LLMCallRequest
@@ -24,7 +24,7 @@ class GenerationEngine:
     def __init__(self, llm_handler=None, model_name=None, debug=False):
         self.logger = logging.getLogger(__name__)
         self.debug = debug
-        self.s2d = String2Dict()
+        # self.s2d = String2Dict()  # DEPRECATED - No longer needed with structured outputs
 
         if llm_handler:
             self.llm_handler = llm_handler
@@ -137,11 +137,39 @@ Provide the answer strictly in the following JSON format, do not combine anythin
  
     def generate_output(self, generation_request: GenerationRequest) -> GenerationResult:
         """
-        Synchronously generates the output and processes postprocessing.
+        Synchronously generates the output with support for structured outputs.
+        
+        Priority order:
+        1. If response_schema is provided -> Use structured output (recommended)
+        2. If pipeline_config is provided -> Use legacy pipeline (deprecated)
+        3. Otherwise -> Standard text generation
 
         :param generation_request: GenerationRequest object containing all necessary data.
         :return: GenerationResult object with the output and metadata.
         """
+        import warnings
+        
+        # Check if pipeline_config is used and suggest migration
+        if generation_request.pipeline_config and not generation_request.response_schema:
+            # Try to auto-migrate pipeline to schema
+            suggested_schema = self._migrate_pipeline_to_schema(generation_request.pipeline_config)
+            if suggested_schema:
+                warnings.warn(
+                    f"Pipeline detected. Auto-migrating to {suggested_schema.__name__} schema. "
+                    f"Please update your code to use response_schema={suggested_schema.__name__} directly.",
+                    DeprecationWarning,
+                    stacklevel=2
+                )
+                generation_request.response_schema = suggested_schema
+                generation_request.pipeline_config = None  # Disable pipeline
+            else:
+                suggestion = self._suggest_schema_for_pipeline(generation_request.pipeline_config)
+                warnings.warn(
+                    f"Pipeline processing is deprecated. {suggestion}. "
+                    f"See devdocs/pipeline_migration_plan.md for details.",
+                    DeprecationWarning,
+                    stacklevel=2
+                )
         generation_requested_at = _now_dt()
         
         # Convert GenerationRequest to LLMCallRequest
@@ -229,12 +257,15 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         if success and response:
             # Handle Responses API Response object
             if hasattr(response, 'output') and response.output:
-                # Extract text from the first output message
-                first_output = response.output[0]
-                if hasattr(first_output, 'content') and first_output.content:
-                    for content_item in first_output.content:
-                        if hasattr(content_item, 'text'):
-                            raw_content = content_item.text
+                # Find the first message output (skip reasoning items)
+                for output_item in response.output:
+                    # Skip ResponseReasoningItem, look for ResponseOutputMessage
+                    if hasattr(output_item, 'content') and output_item.content:
+                        for content_item in output_item.content:
+                            if hasattr(content_item, 'text'):
+                                raw_content = content_item.text
+                                break
+                        if raw_content:
                             break
             # Fallback to old extraction methods
             if raw_content is None:
@@ -247,7 +278,9 @@ Provide the answer strictly in the following JSON format, do not combine anythin
 
         # Determine response type based on output format
         response_type = "text"  # default
-        if llm_call_request.output_data_format == "audio":
+        if llm_call_request.output_type == "json" or hasattr(llm_call_request, 'response_schema') and llm_call_request.response_schema:
+            response_type = "json"
+        elif llm_call_request.output_data_format == "audio":
             response_type = "audio"
         elif llm_call_request.output_data_format == "both":
             response_type = "multimodal"
@@ -255,13 +288,16 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         # Extract response_id from usage if available (Responses API)
         response_id = usage.get('response_id') if usage else None
         
+        # For JSON responses, set content to raw_content
+        content = raw_content if response_type == "json" else None
+        
         return GenerationResult(
             success=success,
             trace_id=trace_id,
             usage=usage,
             raw_content=raw_content,
             raw_response=response,  # ← CRITICAL: Preserve the complete raw response for audio access
-            content=None,  # Will be set later during pipeline processing
+            content=content,  # Set for JSON responses
             retried=retried,
             attempt_count=attempt_count,
             total_invoke_duration_ms=total_invoke_duration_ms,
@@ -279,12 +315,23 @@ Provide the answer strictly in the following JSON format, do not combine anythin
 
     def execute_pipeline(self, generation_result: GenerationResult, pipeline_config: List[Dict[str, Any]]) -> GenerationResult:
         """
-        Executes the processing pipeline on the generation result.
+        [DEPRECATED] Executes the processing pipeline on the generation result.
+        
+        WARNING: Pipelines are deprecated and will be removed in v3.0.
+        Please use response_schema with Pydantic models instead.
 
         :param generation_result: The initial GenerationResult from the LLM.
         :param pipeline_config: List of processing steps.
         :return: Updated GenerationResult after processing.
         """
+        import warnings
+        warnings.warn(
+            "Pipeline processing is deprecated and will be removed in v3.0. "
+            "Please use response_schema with Pydantic models instead. "
+            "See devdocs/pipeline_migration_plan.md for migration guide.",
+            DeprecationWarning,
+            stacklevel=2
+        )
         current_content = generation_result.raw_content
         for step_config in pipeline_config:
             step_type = step_config.get('type')
@@ -452,7 +499,13 @@ Provide the answer strictly in the following JSON format, do not combine anythin
 
         # Parse the JSON-ish string
         try:
-            isolated_answer = self.s2d.run(refine_result.raw_content)["answer"]
+            # String2Dict deprecated - try basic parsing
+            import json
+            try:
+                data = json.loads(refine_result.raw_content)
+                isolated_answer = data.get("answer", refine_result.raw_content)
+            except:
+                isolated_answer = refine_result.raw_content
         except Exception as exc:
             raise RuntimeError(
                 f"Could not parse isolation response: {refine_result.raw_content!r}"
@@ -462,7 +515,8 @@ Provide the answer strictly in the following JSON format, do not combine anythin
 
     def process_semanticisolation(self, content: str, semantic_element_for_extraction: str) -> str:
         """
-        Processes content using semantic isolation.
+        [DEPRECATED] Processes content using semantic isolation.
+        Use structured outputs with SemanticIsolation schema instead.
 
         :param content: The content to process.
         :param semantic_element_for_extraction: The semantic element to extract.
@@ -488,8 +542,13 @@ Provide the answer strictly in the following JSON format, do not combine anythin
             raise ValueError(f"Semantic isolation failed: {refine_result.error_message}")
 
         # Parse the LLM response to extract 'answer'
-        s2d_result = self.s2d.run(refine_result.raw_content)
-        isolated_answer = s2d_result.get('answer')
+        # String2Dict deprecated - use json parsing
+        import json
+        try:
+            s2d_result = json.loads(refine_result.raw_content)
+            isolated_answer = s2d_result.get('answer')
+        except:
+            isolated_answer = refine_result.raw_content
         if isolated_answer is None:
             raise ValueError("Isolated answer not found in the LLM response.")
 
@@ -497,6 +556,7 @@ Provide the answer strictly in the following JSON format, do not combine anythin
 
     def process_converttodict(self, content: Any) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
         """
+        [DEPRECATED] - Use structured outputs instead.
         Converts content to a dictionary or list of dictionaries.
 
         :param content: The content to convert.
@@ -507,10 +567,18 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         if isinstance(content, list):
             return content  # Already a list
         
-        # Use String2Dict to parse
-        result = self.s2d.run(content)
+        # String2Dict deprecated - use json parsing
+        import json
+        import ast
+        try:
+            result = json.loads(content)
+        except:
+            try:
+                result = ast.literal_eval(content)
+            except:
+                result = content
         
-        # String2Dict returns tuple for JSON arrays, convert to list
+        # Convert tuple to list if needed
         if isinstance(result, tuple):
             return list(result)
         
@@ -518,6 +586,7 @@ Provide the answer strictly in the following JSON format, do not combine anythin
 
     def process_extractvalue(self, content: Union[Dict[str, Any], List[Dict[str, Any]]], key: str) -> Any:
         """
+        [DEPRECATED] - Use structured outputs with direct attribute access instead.
         Extracts a value from a dictionary or from each dictionary in a list.
 
         :param content: The dictionary content or list of dictionaries.
@@ -546,6 +615,7 @@ Provide the answer strictly in the following JSON format, do not combine anythin
     
     def process_stringmatchvalidation(self, content: str, expected_string: str) -> str:
         """
+        [DEPRECATED] - Use Pydantic validators in your schema instead.
         Validates that the expected string is present in the content.
 
         :param content: The content to validate.
@@ -558,6 +628,7 @@ Provide the answer strictly in the following JSON format, do not combine anythin
 
     def process_jsonload(self, content: str) -> Dict[str, Any]:
         """
+        [DEPRECATED] - Structured outputs handle JSON automatically.
         Loads content as JSON.
 
         :param content: The content to load.
@@ -568,6 +639,171 @@ Provide the answer strictly in the following JSON format, do not combine anythin
             return json.loads(content)
         except json.JSONDecodeError as e:
             raise ValueError(f"JSON loading failed: {e}")
+    
+    # ============================================================================
+    # Pipeline to Structured Output Migration
+    # ============================================================================
+    
+    def _migrate_pipeline_to_schema(self, pipeline_config: List[Dict[str, Any]]) -> Optional[type]:
+        """
+        Attempt to automatically convert pipeline config to appropriate schema.
+        Returns None if conversion not possible.
+        """
+        if not pipeline_config:
+            return None
+        
+        # Analyze pipeline to determine appropriate schema
+        pipeline_types = [step.get('type', '').lower() for step in pipeline_config]
+        
+        # Common pattern: SemanticIsolation -> ConvertToDict -> ExtractValue
+        if 'semanticisolation' in pipeline_types:
+            from llmservice.structured_schemas import SemanticIsolation
+            return SemanticIsolation
+        
+        # Pattern: ConvertToDict -> ExtractValue (generic extraction)
+        if 'converttodict' in pipeline_types:
+            from llmservice.structured_schemas import StructuredData
+            return StructuredData
+        
+        # Pattern: JSONLoad
+        if 'jsonload' in pipeline_types:
+            from llmservice.structured_schemas import StructuredData
+            return StructuredData
+        
+        return None
+    
+    def _suggest_schema_for_pipeline(self, pipeline_config: List[Dict[str, Any]]) -> str:
+        """
+        Suggest appropriate schema replacement for pipeline config.
+        """
+        if not pipeline_config:
+            return "Use a custom Pydantic schema for your data structure"
+        
+        first_step = pipeline_config[0].get('type', '').lower()
+        
+        suggestions = {
+            'semanticisolation': "Use SemanticIsolation schema or create a custom schema with the specific fields you need",
+            'converttodict': "Define a Pydantic model matching your expected dictionary structure",
+            'extractvalue': "Create a schema with the specific fields you want to extract",
+            'jsonload': "Use StructuredData schema or define a model matching your JSON structure",
+            'stringmatchvalidation': "Use Pydantic validators in your schema with Literal or Enum types"
+        }
+        
+        return suggestions.get(first_step, "Create a custom Pydantic schema for your use case")
+    
+    # ============================================================================
+    # Structured Output Support
+    # ============================================================================
+    
+    def process_with_schema(self, 
+                           content: str, 
+                           schema: type,
+                           instructions: str = None,
+                           **kwargs) -> Any:
+        """
+        Process content with guaranteed structured output using Pydantic schema.
+        
+        :param content: The content to process
+        :param schema: Pydantic model class defining the expected structure
+        :param instructions: Optional system instructions
+        :param kwargs: Additional parameters for generation request
+        :return: Parsed Pydantic model instance
+        """
+        from pydantic import BaseModel
+        import json
+        
+        # Validate schema is a Pydantic model
+        if not issubclass(schema, BaseModel):
+            raise ValueError(f"Schema must be a Pydantic BaseModel, got {type(schema)}")
+        
+        # Create generation request with schema
+        request = GenerationRequest(
+            user_prompt=content,
+            system_prompt=instructions or f"Extract data according to the {schema.__name__} schema",
+            response_schema=schema,
+            reasoning_effort=kwargs.get('reasoning_effort', 'low'),  # Low reasoning for format compliance
+            verbosity=kwargs.get('verbosity', None),  # Let model use default
+            model=kwargs.get('model'),
+            **{k: v for k, v in kwargs.items() if k not in ['reasoning_effort', 'verbosity', 'model']}
+        )
+        
+        # Execute generation
+        result = self.generate_output(request)
+        
+        if result.success:
+            # Parse JSON response to Pydantic model
+            if result.response_type == "json" and result.content:
+                try:
+                    # Content should already be valid JSON if structured output worked
+                    if isinstance(result.content, str):
+                        data = json.loads(result.content)
+                    else:
+                        data = result.content
+                    
+                    # Create and return Pydantic model instance
+                    return schema(**data)
+                except (json.JSONDecodeError, ValueError) as e:
+                    raise ValueError(f"Failed to parse structured output: {e}")
+            else:
+                raise ValueError(f"Unexpected response type: {result.response_type}")
+        else:
+            raise ValueError(f"Generation failed: {result.error_message}")
+    
+    def generate_structured(self, 
+                           prompt: str,
+                           schema: type,
+                           system: str = None,
+                           **kwargs) -> Any:
+        """
+        Simplified interface for structured generation.
+        
+        :param prompt: User prompt
+        :param schema: Pydantic model for the response structure
+        :param system: Optional system prompt
+        :param kwargs: Additional generation parameters
+        :return: Parsed Pydantic model instance
+        """
+        return self.process_with_schema(
+            content=prompt,
+            schema=schema,
+            instructions=system,
+            **kwargs
+        )
+    
+    def semantic_isolation_v2(self, content: str, element: str) -> str:
+        """
+        Semantic isolation using structured output - no parsing errors!
+        
+        :param content: Text to extract from
+        :param element: Semantic element to isolate
+        :return: Isolated text element
+        """
+        from llmservice.structured_schemas import SemanticIsolation
+        
+        result = self.process_with_schema(
+            content=content,
+            schema=SemanticIsolation,
+            instructions=f"Extract only the following semantic element: {element}"
+        )
+        
+        return result.answer
+    
+    def extract_entities(self, text: str) -> List[Dict]:
+        """
+        Extract structured entities from unstructured text.
+        
+        :param text: Text to extract entities from
+        :return: List of extracted entities as dictionaries
+        """
+        from llmservice.structured_schemas import EntitiesList
+        
+        result = self.process_with_schema(
+            content=text,
+            schema=EntitiesList,
+            instructions="Extract all named entities from the text"
+        )
+        
+        return [e.model_dump() for e in result.entities]
 
     def generate_with_cot_chain(self, generation_request: GenerationRequest, 
                                 previous_response_id: Optional[str] = None) -> GenerationResult:
