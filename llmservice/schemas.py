@@ -286,7 +286,6 @@ class GenerationRequest:
     # result handling
     output_type:         Literal["json", "str"] = "str"
     fail_fallback_value: Optional[str]          = None
-    pipeline_config:     List[Dict[str, any]]   = field(default_factory=list)
 
     # ── chat / multimodal fields (the ONLY prompt path) ───────────────────
     system_prompt:    Optional[str]          = None   # 1 system message

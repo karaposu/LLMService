@@ -7,7 +7,7 @@ Uses the new Responses API instead of Chat Completions.
 import os
 import logging
 from typing import Any, Dict, List, Optional, Tuple, Type
-from openai import OpenAI
+from openai import OpenAI, AsyncOpenAI
 from openai import RateLimitError, PermissionDeniedError
 
 from .base import BaseLLMProvider
@@ -99,6 +99,7 @@ class ResponsesAPIProvider(BaseLLMProvider):
     def __init__(self, model_name: str, logger: Optional[logging.Logger] = None):
         super().__init__(model_name, logger)
         self.client = self._initialize_client()
+        self.async_client = self._initialize_async_client()
         self.is_reasoning_model = model_name.startswith(('gpt-5', 'o'))
     
     @classmethod
@@ -118,6 +119,14 @@ class ResponsesAPIProvider(BaseLLMProvider):
             raise ValueError("OPENAI_API_KEY environment variable is required")
         
         return OpenAI(api_key=api_key)
+    
+    def _initialize_async_client(self) -> AsyncOpenAI:
+        """Initialize the async OpenAI client for Responses API."""
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise ValueError("OPENAI_API_KEY environment variable is required")
+        
+        return AsyncOpenAI(api_key=api_key)
     
     def convert_request(self, request: LLMCallRequest) -> Dict[str, Any]:
         """Convert LLMCallRequest to Responses API format."""
@@ -353,8 +362,8 @@ class ResponsesAPIProvider(BaseLLMProvider):
     async def _invoke_async_impl(self, payload: Dict) -> Tuple[Any, bool, Optional[ErrorType]]:
         """Core asynchronous invoke logic for Responses API."""
         try:
-            # Note: Using async client
-            response = await self.client.responses.create(**payload)
+            # Use async client for async calls
+            response = await self.async_client.responses.create(**payload)
             return response, True, None
         except RateLimitError as e:
             self.logger.warning(f"Rate limit hit: {e}")

@@ -6,7 +6,7 @@ from examples.SQL_code_generator.myllmservice import MyLLMService
 
 def main():
     service = MyLLMService()
-
+    
     my_db_desc= """ I have a database table with the following schema:
            Table: bills
            - bill_id (INT, Primary Key)
