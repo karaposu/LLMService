@@ -227,12 +227,23 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         # Extract content from response
         raw_content = None
         if success and response:
-            if hasattr(response, 'content'):
-                raw_content = response.content
-            elif isinstance(response, str):
-                raw_content = response
-            else:
-                raw_content = str(response)
+            # Handle Responses API Response object
+            if hasattr(response, 'output') and response.output:
+                # Extract text from the first output message
+                first_output = response.output[0]
+                if hasattr(first_output, 'content') and first_output.content:
+                    for content_item in first_output.content:
+                        if hasattr(content_item, 'text'):
+                            raw_content = content_item.text
+                            break
+            # Fallback to old extraction methods
+            if raw_content is None:
+                if hasattr(response, 'content'):
+                    raw_content = response.content
+                elif isinstance(response, str):
+                    raw_content = response
+                else:
+                    raw_content = str(response)
 
         # Determine response type based on output format
         response_type = "text"  # default
@@ -241,6 +252,9 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         elif llm_call_request.output_data_format == "both":
             response_type = "multimodal"
 
+        # Extract response_id from usage if available (Responses API)
+        response_id = usage.get('response_id') if usage else None
+        
         return GenerationResult(
             success=success,
             trace_id=trace_id,
@@ -257,6 +271,7 @@ Provide the answer strictly in the following JSON format, do not combine anythin
             model=llm_call_request.model_name or self.llm_handler.model_name,
             formatted_prompt=llm_call_request.user_prompt,  # For backward compatibility
             response_type=response_type,  # ← FIXED: Set response type based on output format
+            response_id=response_id,  # ← NEW: Track response_id for CoT chaining
             request_id=request_id,
             operation_name=operation_name,
             timestamps=EventTimestamps(attempts=attempts)
@@ -554,6 +569,52 @@ Provide the answer strictly in the following JSON format, do not combine anythin
         except json.JSONDecodeError as e:
             raise ValueError(f"JSON loading failed: {e}")
 
+    def generate_with_cot_chain(self, generation_request: GenerationRequest, 
+                                previous_response_id: Optional[str] = None) -> GenerationResult:
+        """
+        Generate output with CoT chaining support for Responses API.
+        
+        :param generation_request: The generation request
+        :param previous_response_id: Optional response_id from previous call to chain CoT
+        :return: GenerationResult with response_id for future chaining
+        """
+        # Set the previous_response_id if provided
+        if previous_response_id:
+            generation_request.previous_response_id = previous_response_id
+            self.logger.info(f"Chaining CoT with previous response: {previous_response_id}")
+        
+        # Execute the generation
+        result = self.generate_output(generation_request)
+        
+        # Log the new response_id if available
+        if result.response_id:
+            self.logger.info(f"Generated response with ID: {result.response_id}")
+        
+        return result
+    
+    async def generate_with_cot_chain_async(self, generation_request: GenerationRequest,
+                                           previous_response_id: Optional[str] = None) -> GenerationResult:
+        """
+        Asynchronously generate output with CoT chaining support for Responses API.
+        
+        :param generation_request: The generation request
+        :param previous_response_id: Optional response_id from previous call to chain CoT
+        :return: GenerationResult with response_id for future chaining
+        """
+        # Set the previous_response_id if provided
+        if previous_response_id:
+            generation_request.previous_response_id = previous_response_id
+            self.logger.info(f"Chaining CoT with previous response: {previous_response_id}")
+        
+        # Execute the generation
+        result = await self.generate_output_async(generation_request)
+        
+        # Log the new response_id if available
+        if result.response_id:
+            self.logger.info(f"Generated response with ID: {result.response_id}")
+        
+        return result
+
 
 # Main function for testing
 def main():
@@ -566,7 +627,8 @@ def main():
         stream=sys.stdout
     )
 
-    generation_engine = GenerationEngine(model_name='gpt-4o-mini')
+    # generation_engine = GenerationEngine(model_name='gpt-4o-mini')
+    generation_engine = GenerationEngine(model_name='gpt-5-mini')
 
     # Test basic generation with new schema
     print("=== Testing Basic Generation ===")
@@ -583,14 +645,16 @@ def main():
     print(f"Usage: {generation_result.usage}")
 
     # Test semantic isolation pipeline
+    print()
+    print()
     print("\n=== Testing Semantic Isolation Pipeline ===")
     pipeline_request = GenerationRequest(
-        user_prompt='The patient shows symptoms of severe headache and nausea. The diagnosis is migraine. Treatment includes rest and pain medication.',
+        user_prompt='The patient shows symptoms of severe headache and nausea. The diagnosis is migraine. Treatment includes rest and pain medication. What are generic symptons',
         pipeline_config=[
             {
                 'type': 'SemanticIsolation',
                 'params': {
-                    'semantic_element_for_extraction': 'symptoms only'
+                    'semantic_element_for_extraction': 'symptoms_as_words_only'
                 }
             }
         ],
@@ -611,13 +675,18 @@ def main():
                 print(f"    Result: {step.content_after}")
 
     # Test multi-step pipeline
+    print()
+    print()
     print("\n=== Testing Multi-Step Pipeline ===")
     multi_pipeline_request = GenerationRequest(
         user_prompt='Return patient information in JSON format with fields: name, age, symptoms, diagnosis. Use this data: Patient John, 30 years old, has headache and fever, diagnosed with flu.',
         pipeline_config=[
             {
-                'type': 'JSONLoad',
+               # 'type': 'JSONLoad',
+                'type': 'ConvertToDict',
                 'params': {}
+
+
             },
             {
                 'type': 'ExtractValue',
@@ -636,162 +705,164 @@ def main():
     print(f"Final Content: {multi_result.content}")
     print(f"Pipeline Steps: {len(multi_result.pipeline_steps_results)}")
 
-    # Test audio input (multimodal)
-    print("\n=== Testing Audio Input (Speech-to-Text) ===")
-    try:
-        import base64
-        from pathlib import Path
+    # # Test audio input (multimodal)
+    # print("\n=== Testing Audio Input (Speech-to-Text) ===")
+    # try:
+    #     import base64
+    #     from pathlib import Path
         
-        wav_path = Path("llmservice/my_voice.wav")
-        if wav_path.exists():
-            # Read and base64-encode the audio file
-            b64_wav = base64.b64encode(wav_path.read_bytes()).decode("ascii")
+    #     wav_path = Path("llmservice/my_voice.wav")
+    #     if wav_path.exists():
+    #         # Read and base64-encode the audio file
+    #         b64_wav = base64.b64encode(wav_path.read_bytes()).decode("ascii")
             
-            audio_input_request = GenerationRequest(
-                model="gpt-4o-audio-preview",
-                user_prompt="Please answer the question in the audio and explain your reasoning:",
-                input_audio_b64=b64_wav,
-                request_id=4,
-                operation_name='process_audio_input'
-            )
+    #         audio_input_request = GenerationRequest(
+    #             model="gpt-4o-audio-preview",
+    #             user_prompt="Please answer the question in the audio and explain your reasoning:",
+    #             input_audio_b64=b64_wav,
+    #             request_id=4,
+    #             operation_name='process_audio_input'
+    #         )
             
-            audio_input_result = generation_engine.generate_output(audio_input_request)
-            print(f"Audio Input Success: {audio_input_result.success}")
-            if audio_input_result.success:
-                print(f"Audio Input Response: {audio_input_result.content}")
-                print(f"Audio Input Usage: {audio_input_result.usage}")
-            else:
-                print(f"Audio Input Error: {audio_input_result.error_message}")
-        else:
-            print(f"Audio file not found at {wav_path.resolve()}")
-            print("To test audio input, place a WAV file at that location.")
-    except Exception as e:
-        print(f"Audio input test failed: {e}")
+    #         audio_input_result = generation_engine.generate_output(audio_input_request)
+    #         print(f"Audio Input Success: {audio_input_result.success}")
+    #         if audio_input_result.success:
+    #             print(f"Audio Input Response: {audio_input_result.content}")
+    #             print(f"Audio Input Usage: {audio_input_result.usage}")
+    #         else:
+    #             print(f"Audio Input Error: {audio_input_result.error_message}")
+    #     else:
+    #         print(f"Audio file not found at {wav_path.resolve()}")
+    #         print("To test audio input, place a WAV file at that location.")
+    # except Exception as e:
+    #     print(f"Audio input test failed: {e}")
 
-    # Test audio output (text-to-speech) - WITH SIMPLIFIED SAVING
-    print("\n=== Testing Audio Output (Text-to-Speech) ===")
-    try:
-        audio_output_request = GenerationRequest(
-            model="gpt-4o-audio-preview",
-            user_prompt="Please say 'Hello, this is a test of audio output from the generation engine' in a friendly voice.",
-            output_data_format="audio",
-            audio_output_config={"voice": "alloy", "format": "wav"},
-            request_id=5,
-            operation_name='generate_audio_output'
-        )
+    # # Test audio output (text-to-speech) - WITH SIMPLIFIED SAVING
+    # print("\n=== Testing Audio Output (Text-to-Speech) ===")
+    # try:
+    #     audio_output_request = GenerationRequest(
+    #         model="gpt-4o-audio-preview",
+    #         user_prompt="Please say 'Hello, this is a test of audio output from the generation engine' in a friendly voice.",
+    #         output_data_format="audio",
+    #         audio_output_config={"voice": "alloy", "format": "wav"},
+    #         request_id=5,
+    #         operation_name='generate_audio_output'
+    #     )
         
-        audio_output_result = generation_engine.generate_output(audio_output_request)
-        print(f"Audio Output Success: {audio_output_result.success}")
+    #     audio_output_result = generation_engine.generate_output(audio_output_request)
+    #     print(f"Audio Output Success: {audio_output_result.success}")
         
-        if audio_output_result.success:
-            print(f"Audio Output Usage: {audio_output_result.usage}")
+    #     if audio_output_result.success:
+    #         print(f"Audio Output Usage: {audio_output_result.usage}")
             
-            # Simple audio saving using convenience methods
-            if audio_output_result.save_audio("llmservice/generation_engine_audio_output.wav"):
-                audio_data = audio_output_result.get_audio_data()
-                print(f"✅ Audio saved to: llmservice/generation_engine_audio_output.wav")
-                print(f"Audio size: {len(audio_data)} bytes")
+    #         # Simple audio saving using convenience methods
+    #         if audio_output_result.save_audio("llmservice/generation_engine_audio_output.wav"):
+    #             audio_data = audio_output_result.get_audio_data()
+    #             print(f"✅ Audio saved to: llmservice/generation_engine_audio_output.wav")
+    #             print(f"Audio size: {len(audio_data)} bytes")
                 
-                transcript = audio_output_result.get_audio_transcript()
-                if transcript:
-                    print(f"Audio transcript: {transcript}")
-            else:
-                print("⚠️ Could not save audio file")
-        else:
-            print(f"Audio Output Error: {audio_output_result.error_message}")
+    #             transcript = audio_output_result.get_audio_transcript()
+    #             if transcript:
+    #                 print(f"Audio transcript: {transcript}")
+    #         else:
+    #             print("⚠️ Could not save audio file")
+    #     else:
+    #         print(f"Audio Output Error: {audio_output_result.error_message}")
             
-    except Exception as e:
-        print(f"Audio output test failed: {e}")
+    # except Exception as e:
+    #     print(f"Audio output test failed: {e}")
 
-    # Test both text and audio output - SIMPLIFIED VERSION
-    print("\n=== Testing Both Text + Audio Output ===")
-    try:
-        both_output_request = GenerationRequest(
-            model="gpt-4o-audio-preview",
-            user_prompt="Explain what machine learning is in simple terms, suitable for a 10-year-old.",
-            output_data_format="both",
-            audio_output_config={"voice": "shimmer", "format": "wav"},
-            request_id=6,
-            operation_name='generate_both_outputs'
-        )
+    # # Test both text and audio output - SIMPLIFIED VERSION
+    # print("\n=== Testing Both Text + Audio Output ===")
+    # try:
+    #     both_output_request = GenerationRequest(
+    #         model="gpt-4o-audio-preview",
+    #         user_prompt="Explain what machine learning is in simple terms, suitable for a 10-year-old.",
+    #         output_data_format="both",
+    #         audio_output_config={"voice": "shimmer", "format": "wav"},
+    #         request_id=6,
+    #         operation_name='generate_both_outputs'
+    #     )
         
-        both_result = generation_engine.generate_output(both_output_request)
-        print(f"Both Output Success: {both_result.success}")
+    #     both_result = generation_engine.generate_output(both_output_request)
+    #     print(f"Both Output Success: {both_result.success}")
         
-        if both_result.success:
-            # Text output
-            print(f"Text Response: {both_result.content[:100]}..." if both_result.content else "No text content")
-            print(f"Both Output Usage: {both_result.usage}")
+    #     if both_result.success:
+    #         # Text output
+    #         print(f"Text Response: {both_result.content[:100]}..." if both_result.content else "No text content")
+    #         print(f"Both Output Usage: {both_result.usage}")
             
-            # Audio output - now simple!
-            audio_data = both_result.get_audio_data()
-            if audio_data:
-                # Save audio using the convenience method
-                if both_result.save_audio("llmservice/generation_engine_both_output.wav"):
-                    print(f"✅ Audio saved to: llmservice/generation_engine_both_output.wav")
-                    print(f"Audio size: {len(audio_data)} bytes")
-                else:
-                    print("⚠️ Could not save audio file")
+    #         # Audio output - now simple!
+    #         audio_data = both_result.get_audio_data()
+    #         if audio_data:
+    #             # Save audio using the convenience method
+    #             if both_result.save_audio("llmservice/generation_engine_both_output.wav"):
+    #                 print(f"✅ Audio saved to: llmservice/generation_engine_both_output.wav")
+    #                 print(f"Audio size: {len(audio_data)} bytes")
+    #             else:
+    #                 print("⚠️ Could not save audio file")
                 
-                # Get transcript if available
-                transcript = both_result.get_audio_transcript()
-                if transcript:
-                    print(f"Audio transcript: {transcript}")
+    #             # Get transcript if available
+    #             transcript = both_result.get_audio_transcript()
+    #             if transcript:
+    #                 print(f"Audio transcript: {transcript}")
                 
-                print("✅ Both text and audio generation completed")
-            else:
-                print("⚠️ No audio data found in the response")
-                print("✅ Text generation completed")
-        else:
-            print(f"Both Output Error: {both_result.error_message}")
+    #             print("✅ Both text and audio generation completed")
+    #         else:
+    #             print("⚠️ No audio data found in the response")
+    #             print("✅ Text generation completed")
+    #     else:
+    #         print(f"Both Output Error: {both_result.error_message}")
             
-    except Exception as e:
-        print(f"Both output test failed: {e}")
+    # except Exception as e:
+    #     print(f"Both output test failed: {e}")
 
-    # Test audio input with pipeline processing
-    print("\n=== Testing Audio Input + Pipeline Processing ===")
-    try:
-        if wav_path.exists():
-            audio_pipeline_request = GenerationRequest(
-                model="gpt-4o-audio-preview",
-                user_prompt="Please answer the question in the audio. Provide your response in JSON format with fields: question, answer, confidence.",
-                input_audio_b64=b64_wav,
-                pipeline_config=[
-                    {
-                        'type': 'ConvertToDict',
-                        'params': {}
-                    },
-                    {
-                        'type': 'ExtractValue',
-                        'params': {
-                            'key': 'answer'
-                        }
-                    }
-                ],
-                request_id=7,
-                operation_name='audio_with_pipeline'
-            )
+    # # Test audio input with pipeline processing
+    # print("\n=== Testing Audio Input + Pipeline Processing ===")
+    # try:
+    #     if wav_path.exists():
+    #         audio_pipeline_request = GenerationRequest(
+    #             model="gpt-4o-audio-preview",
+    #             user_prompt="Please answer the question in the audio. Provide your response in JSON format with fields: question, answer, confidence.",
+    #             input_audio_b64=b64_wav,
+    #             pipeline_config=[
+    #                 {
+    #                     'type': 'ConvertToDict',
+    #                     'params': {}
+    #                 },
+    #                 {
+    #                     'type': 'ExtractValue',
+    #                     'params': {
+    #                         'key': 'answer'
+    #                     }
+    #                 }
+    #             ],
+    #             request_id=7,
+    #             operation_name='audio_with_pipeline'
+    #         )
             
-            audio_pipeline_result = generation_engine.generate_output(audio_pipeline_request)
-            print(f"Audio + Pipeline Success: {audio_pipeline_result.success}")
-            if audio_pipeline_result.success:
-                print(f"Raw Audio Response: {audio_pipeline_result.raw_content}")
-                print(f"Pipeline Processed Content: {audio_pipeline_result.content}")
-                print(f"Pipeline Steps: {len(audio_pipeline_result.pipeline_steps_results)}")
-                for i, step in enumerate(audio_pipeline_result.pipeline_steps_results):
-                    print(f"  Step {i+1}: {step.step_type} - {'✓' if step.success else '✗'}")
-            else:
-                print(f"Audio + Pipeline Error: {audio_pipeline_result.error_message}")
-        else:
-            print("Skipping audio + pipeline test - no audio file available")
-    except Exception as e:
-        print(f"Audio + pipeline test failed: {e}")
+    #         audio_pipeline_result = generation_engine.generate_output(audio_pipeline_request)
+    #         print(f"Audio + Pipeline Success: {audio_pipeline_result.success}")
+    #         if audio_pipeline_result.success:
+    #             print(f"Raw Audio Response: {audio_pipeline_result.raw_content}")
+    #             print(f"Pipeline Processed Content: {audio_pipeline_result.content}")
+    #             print(f"Pipeline Steps: {len(audio_pipeline_result.pipeline_steps_results)}")
+    #             for i, step in enumerate(audio_pipeline_result.pipeline_steps_results):
+    #                 print(f"  Step {i+1}: {step.step_type} - {'✓' if step.success else '✗'}")
+    #         else:
+    #             print(f"Audio + Pipeline Error: {audio_pipeline_result.error_message}")
+    #     else:
+    #         print("Skipping audio + pipeline test - no audio file available")
+    # except Exception as e:
+    #     print(f"Audio + pipeline test failed: {e}")
 
     # Test access to raw response
+    print()
     print("\n=== Testing Raw Response Access ===")
     try:
         test_request = GenerationRequest(
-            model="gpt-4o-mini",
+            # model="gpt-4o-mini",
+            model="gpt-5-mini",
             user_prompt="What is 2+2?",
             request_id=8,
             operation_name='test_raw_response'
@@ -813,40 +884,88 @@ def main():
     except Exception as e:
         print(f"Raw response test failed: {e}")
 
-    # Test audio-only output
-    print("\n=== Testing Audio-Only Output ===")
+    # # Test audio-only output
+    # print("\n=== Testing Audio-Only Output ===")
+    # try:
+    #     audio_only_request = GenerationRequest(
+    #         model="gpt-4o-audio-preview",
+    #         user_prompt="Please count from 1 to 5 slowly and clearly.",
+    #         output_data_format="audio",
+    #         audio_output_config={"voice": "echo", "format": "wav"},
+    #         request_id=9,
+    #         operation_name='generate_audio_only'
+    #     )
+        
+    #     audio_only_result = generation_engine.generate_output(audio_only_request)
+    #     print(f"Audio-Only Success: {audio_only_result.success}")
+        
+    #     if audio_only_result.success:
+    #         print(f"Audio-Only Usage: {audio_only_result.usage}")
+            
+    #         # Save audio
+    #         if audio_only_result.save_audio("llmservice/generation_engine_audio_only.wav"):
+    #             audio_data = audio_only_result.get_audio_data()
+    #             print(f"✅ Audio-only saved to: llmservice/generation_engine_audio_only.wav")
+    #             print(f"Audio size: {len(audio_data)} bytes")
+                
+    #             transcript = audio_only_result.get_audio_transcript()
+    #             if transcript:
+    #                 print(f"Audio transcript: {transcript}")
+    #         else:
+    #             print("⚠️ Could not save audio-only file")
+    #     else:
+    #         print(f"Audio-Only Error: {audio_only_result.error_message}")
+            
+    # except Exception as e:
+    #     print(f"Audio-only test failed: {e}")
+
+    # Test CoT chaining with Responses API
+    print("\n=== Testing CoT Chaining (Responses API) ===")
     try:
-        audio_only_request = GenerationRequest(
-            model="gpt-4o-audio-preview",
-            user_prompt="Please count from 1 to 5 slowly and clearly.",
-            output_data_format="audio",
-            audio_output_config={"voice": "echo", "format": "wav"},
-            request_id=9,
-            operation_name='generate_audio_only'
+        # First request in the chain
+        first_request = GenerationRequest(
+            # model="gpt-4o-mini",
+            model="gpt-5-mini",
+            user_prompt="What are the three primary colors in painting?",
+            request_id=10,
+            operation_name='cot_chain_first'
         )
         
-        audio_only_result = generation_engine.generate_output(audio_only_request)
-        print(f"Audio-Only Success: {audio_only_result.success}")
+        first_result = generation_engine.generate_with_cot_chain(first_request)
+        print(f"First CoT Success: {first_result.success}")
         
-        if audio_only_result.success:
-            print(f"Audio-Only Usage: {audio_only_result.usage}")
+        if first_result.success:
+            print(f"First Response: {first_result.content}")
+            print(f"First Response ID: {first_result.response_id}")
             
-            # Save audio
-            if audio_only_result.save_audio("llmservice/generation_engine_audio_only.wav"):
-                audio_data = audio_only_result.get_audio_data()
-                print(f"✅ Audio-only saved to: llmservice/generation_engine_audio_only.wav")
-                print(f"Audio size: {len(audio_data)} bytes")
+            # Second request, chaining from the first
+            if first_result.response_id:
+                second_request = GenerationRequest(
+                    model="gpt-4o-mini",
+                    user_prompt="Now explain how you can mix these colors to create secondary colors.",
+                    request_id=11,
+                    operation_name='cot_chain_second'
+                )
                 
-                transcript = audio_only_result.get_audio_transcript()
-                if transcript:
-                    print(f"Audio transcript: {transcript}")
+                second_result = generation_engine.generate_with_cot_chain(
+                    second_request, 
+                    previous_response_id=first_result.response_id
+                )
+                print(f"\nSecond CoT Success: {second_result.success}")
+                
+                if second_result.success:
+                    print(f"Second Response: {second_result.content}")
+                    print(f"Second Response ID: {second_result.response_id}")
+                    print(f"✅ CoT chaining completed successfully")
+                else:
+                    print(f"Second CoT Error: {second_result.error_message}")
             else:
-                print("⚠️ Could not save audio-only file")
+                print("⚠️ No response_id from first call - CoT chaining not available")
         else:
-            print(f"Audio-Only Error: {audio_only_result.error_message}")
+            print(f"First CoT Error: {first_result.error_message}")
             
     except Exception as e:
-        print(f"Audio-only test failed: {e}")
+        print(f"CoT chaining test failed: {e}")
 
 
 if __name__ == '__main__':

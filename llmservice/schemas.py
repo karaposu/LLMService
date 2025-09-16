@@ -256,6 +256,9 @@ class LLMCallRequest:
     # desired output format
     output_data_format: Literal["text", "audio", "both"] = "text"
     audio_output_config: Optional[Dict[str, any]] = None  # e.g. {"voice":"alloy","format":"wav"}
+    
+    # Responses API CoT chaining
+    previous_response_id: Optional[str] = None  # For chaining CoT with Responses API
 
    
 
@@ -283,10 +286,13 @@ class GenerationRequest:
     input_audio_b64:  Optional[str]          = None   # base-64 WAV
     images:           Optional[List[str]]    = None   # list of b64 PNG/JPG
     tool_call:        Optional[Dict[str, any]]= None  # tool/function stub
-
+     
     # desired output format
     output_data_format: Literal["text", "audio", "both"] = "text"
     audio_output_config: Optional[Dict[str, any]] = None  # e.g. {"voice":"alloy","format":"wav"}
+    
+    # Responses API CoT chaining
+    previous_response_id: Optional[str] = None  # For chaining CoT with Responses API
 
     # ── validation ───────────────────────────────────────────────────────
     def __post_init__(self) -> None:
@@ -443,6 +449,7 @@ class GenerationResult:
     formatted_prompt: Optional[str] = None
     unformatted_prompt: Optional[str] = None
     response_type: Optional[str] = None
+    response_id: Optional[str] = None  # For CoT chaining with Responses API
     pipeline_steps_results: List[PipelineStepResult] = field(default_factory=list)
     # rpm tpm related logs
     rpm_at_the_beginning: Optional[int] = None

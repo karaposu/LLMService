@@ -1,8 +1,6 @@
 # llmservice/llm_handler.py
 """
 Refactored LLM Handler with clean provider abstraction.
-
-python -m llmservice.llm_handler
 """
 
 import os
@@ -23,8 +21,7 @@ from openai import RateLimitError
 # Local imports
 from .schemas import LLMCallRequest, InvokeResponseData, InvocationAttempt, ErrorType
 from .utils import _now_dt
-# Use only the new Responses API provider
-from .providers.new_openai_provider import ResponsesAPIProvider
+from .providers import BaseLLMProvider, OpenAIProvider, OllamaProvider
 
 # Load environment variables
 load_dotenv()
@@ -40,28 +37,51 @@ logging.getLogger('httpcore').setLevel(logging.WARNING)
 # ============================================================================
 
 class LLMHandler:
-    """Simplified LLM handler using only Responses API."""
+    """Clean, provider-agnostic LLM handler with automatic provider detection."""
+    
+    # Provider registry
+    PROVIDERS: Dict[str, Type[BaseLLMProvider]] = {
+        "openai": OpenAIProvider,
+        "ollama": OllamaProvider,
+    }
     
     def __init__(self, model_name: str, logger: Optional[logging.Logger] = None):
         self.model_name = model_name
         self.logger = logger or logging.getLogger(__name__)
         self.max_retries = 2
         
-        # Use only the Responses API provider for everything
-        self.provider = ResponsesAPIProvider(model_name, logger)
+        # Auto-detect and initialize the appropriate provider
+        provider_name = self._detect_provider(model_name)
+        provider_class = self.PROVIDERS[provider_name]
+        self.provider = provider_class(model_name, logger)
         
-        self.logger.debug(f"Initialized LLMHandler with Responses API provider for model {model_name}")
+        self.logger.debug(f"Initialized LLMHandler with {provider_name} provider for model {model_name}")
+    
+    def _detect_provider(self, model_name: str) -> str:
+        """Auto-detect which provider to use for a given model."""
+        for provider_name, provider_class in self.PROVIDERS.items():
+            if provider_class.supports_model(model_name):
+                return provider_name
+        
+        # Fallback logic for unknown models
+        if model_name.startswith(("gpt-", "o1", "o3", "o4")):
+            self.logger.warning(f"Unknown OpenAI model '{model_name}', using OpenAI provider")
+            return "openai"
+        else:
+            self.logger.warning(f"Unknown model '{model_name}', using Ollama provider")
+            return "ollama"
     
     def change_model(self, model_name: str) -> None:
-        """Switch to a different model."""
+        """Switch to a different model (potentially different provider)."""
         if model_name == self.model_name:
             return  # No change needed
         
         self.model_name = model_name
-        # Create new provider instance with new model
-        self.provider = ResponsesAPIProvider(model_name, self.logger)
+        provider_name = self._detect_provider(model_name)
+        provider_class = self.PROVIDERS[provider_name]
+        self.provider = provider_class(model_name, self.logger)
         
-        self.logger.debug(f"Changed to model {model_name} with Responses API provider")
+        # self.logger.debug(f"Changed to model {model_name} with {provider_name} provider")
     
     def process_call_request(self, request: LLMCallRequest) -> InvokeResponseData:
         """Main entry point for synchronous LLM calls."""
@@ -220,35 +240,33 @@ class LLMHandler:
             )
     
     def _build_usage_metadata(self, response: Any, success: bool) -> Dict[str, Any]:
-        """Build comprehensive usage metadata with costs including reasoning tokens."""
+        """Build comprehensive usage metadata with costs."""
         if not success or not response:
             return self._init_empty_usage()
         
-        # Extract basic usage from provider (includes reasoning_tokens)
+        # Extract basic usage from provider
         usage = self.provider.extract_usage(response)
         
-        # Calculate costs (now returns dict with reasoning_cost)
-        costs = self.provider.calculate_cost(self.model_name, usage)
+        # Calculate costs
+        input_cost, output_cost = self.provider.calculate_cost(usage)
         
         # Build complete metadata
         return {
-            **usage,  # Includes input_tokens, output_tokens, reasoning_tokens, content, response_id
-            **costs   # Includes input_cost, output_cost, reasoning_cost, total_cost
+            **usage,
+            "input_cost": input_cost,
+            "output_cost": output_cost,
+            "total_cost": input_cost + output_cost
         }
     
     def _init_empty_usage(self) -> Dict[str, Any]:
-        """Return empty usage metadata structure with reasoning support."""
+        """Return empty usage metadata structure."""
         return {
             "input_tokens": 0,
             "output_tokens": 0,
-            "reasoning_tokens": 0,  # NEW: reasoning tokens
             "total_tokens": 0,
             "input_cost": 0.0,
             "output_cost": 0.0,
-            "reasoning_cost": 0.0,  # NEW: reasoning cost
-            "total_cost": 0.0,
-            "response_id": None,    # NEW: for CoT chaining
-            "content": None
+            "total_cost": 0.0
         }
 
 
@@ -275,18 +293,8 @@ def main():
     result = handler.process_call_request(request)
     print(f"Success: {result.success}")
     if result.success:
-        # Extract text from Response object (new API structure)
-        response_text = None
-        if hasattr(result.response, 'output') and result.response.output:
-            first_output = result.response.output[0]
-            if hasattr(first_output, 'content') and first_output.content:
-                for content_item in first_output.content:
-                    if hasattr(content_item, 'text'):
-                        response_text = content_item.text
-                        break
-        print(f"Response: {response_text}")
+        print(f"Response: {result.response.content}")
         print(f"Usage: {result.usage}")
-        print(f"Response ID: {result.usage.get('response_id', 'N/A')}")
     else:
         print(f"Error: {result.error_type}")
     
@@ -311,16 +319,7 @@ def main():
             audio_result = handler.process_call_request(audio_request)
             print(f"Audio Success: {audio_result.success}")
             if audio_result.success:
-                # Extract text from Response object
-                audio_response_text = None
-                if hasattr(audio_result.response, 'output') and audio_result.response.output:
-                    first_output = audio_result.response.output[0]
-                    if hasattr(first_output, 'content') and first_output.content:
-                        for content_item in first_output.content:
-                            if hasattr(content_item, 'text'):
-                                audio_response_text = content_item.text
-                                break
-                print(f"Audio Response: {audio_response_text}")
+                print(f"Audio Response: {audio_result.response.content}")
                 print(f"Audio Usage: {audio_result.usage}")
             else:
                 print(f"Audio Error: {audio_result.error_type}")
@@ -343,16 +342,7 @@ def main():
     system_result = handler.process_call_request(system_user_request)
     print(f"System+User Success: {system_result.success}")
     if system_result.success:
-        # Extract text from Response object
-        system_response_text = None
-        if hasattr(system_result.response, 'output') and system_result.response.output:
-            first_output = system_result.response.output[0]
-            if hasattr(first_output, 'content') and first_output.content:
-                for content_item in first_output.content:
-                    if hasattr(content_item, 'text'):
-                        system_response_text = content_item.text
-                        break
-        print(f"Response: {system_response_text}")
+        print(f"Response: {system_result.response.content}")
 
     # Test 4: Audio Output (Text-to-Speech)
     print("\n=== Testing Audio Output (Text-to-Speech) ===")
@@ -588,16 +578,7 @@ def main():
     switch_result = handler.process_call_request(switch_request)
     print(f"Model Switch Success: {switch_result.success}")
     if switch_result.success:
-        # Extract text from Response object
-        haiku_response_text = None
-        if hasattr(switch_result.response, 'output') and switch_result.response.output:
-            first_output = switch_result.response.output[0]
-            if hasattr(first_output, 'content') and first_output.content:
-                for content_item in first_output.content:
-                    if hasattr(content_item, 'text'):
-                        haiku_response_text = content_item.text
-                        break
-        print(f"Haiku Response: {haiku_response_text}")
+        print(f"Haiku Response: {switch_result.response.content}")
 
 
 if __name__ == "__main__":
