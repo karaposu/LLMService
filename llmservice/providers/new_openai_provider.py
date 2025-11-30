@@ -292,13 +292,13 @@ class ResponsesAPIProvider(BaseLLMProvider):
         # Generate JSON schema with proper configuration for strict mode
         schema = schema_model.model_json_schema(mode='serialization')
         
-        # For strict mode, we need to ensure all properties are required
-        # and additionalProperties is false
+        # For strict mode, we need to ensure additionalProperties is false
+        # but preserve the original required fields from the Pydantic model
         if strict:
             schema['additionalProperties'] = False
-            # Make all properties required (even Optional ones)
-            if 'properties' in schema:
-                schema['required'] = list(schema['properties'].keys())
+            # Keep the required fields as defined by the Pydantic model
+            # Don't force all properties to be required
+            # The schema already has 'required' field from model_json_schema()
             # Also set it recursively for nested objects
             self._set_additional_properties_false(schema)
         

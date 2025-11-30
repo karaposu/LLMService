@@ -2,6 +2,9 @@
 """
 Test script for Structured Outputs integration.
 Tests the new structured output functionality with the Responses API.
+
+
+python test_structured_outputs.py
 """
 
 import os
